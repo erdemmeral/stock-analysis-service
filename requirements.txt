@@ -1,6 +1,18 @@
-pandas
-numpy
-requests
-yfinance
-nltk
-textblob 
+# Core dependencies
+pandas>=1.3.0
+numpy>=1.19.0
+yfinance>=0.1.63
+ta>=0.7.0  # Technical Analysis library
+scipy>=1.7.0
+tensorflow>=2.6.0
+
+# API clients
+python-telegram-bot>=13.7
+requests>=2.26.0
+aiohttp>=3.8.0
+
+# Database
+asyncpg>=0.24.0
+
+# Utilities
+python-dotenv>=0.19.0 
