@@ -1,4 +1,4 @@
-app = "stock-analysis-bot"
+app = "stock-analysis-service"
 
 [build]
   dockerfile = "Dockerfile"
