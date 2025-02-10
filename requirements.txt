@@ -5,6 +5,8 @@ yfinance>=0.1.63
 ta>=0.7.0  # Technical Analysis library
 scipy>=1.7.0
 tensorflow>=2.6.0
+transformers>=4.30.0  # For NLP tasks
+torch>=2.0.0  # Required by transformers
 
 # API clients
 python-telegram-bot>=13.7
@@ -30,4 +32,13 @@ seaborn>=0.11.2
 
 # Date/Time handling
 pytz>=2023.3
-python-dateutil>=2.8.2 
+python-dateutil>=2.8.2
+
+# Testing
+pytest>=7.0.0
+pytest-asyncio>=0.18.0
+pytest-cov>=3.0.0
+
+# Web Scraping & Text Processing
+beautifulsoup4>=4.9.3  # For news_analysis.py
+lxml>=4.9.0  # XML parser for BeautifulSoup 
