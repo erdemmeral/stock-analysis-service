@@ -1,0 +1,11 @@
+stock_analyzer/
+├── src/
+│   ├── __init__.py
+│   ├── fundamental_analysis.py
+│   ├── technical_analysis.py
+│   ├── news_analysis.py
+│   └── stock_scorer.py
+├── config/
+│   └── config.py
+├── requirements.txt
+└── main.py 
