@@ -16,8 +16,9 @@ primary_region = "fra"
   PORTFOLIO_THRESHOLD_SCORE = "75"
   PYTHONUNBUFFERED = "1"
 
-[processes]
-  worker = "python -m src.main"
+# Remove processes section since it's causing confusion with app type
+# [processes]
+#   worker = "python -m src.main"
 
 # Add logging
 [logging]
