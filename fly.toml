@@ -1,5 +1,8 @@
 app = "stock-analysis-bot"
 
+[build]
+  dockerfile = "Dockerfile"
+
 [env]
   ANALYSIS_INTERVAL = "3600"  # 1 hour in seconds
   PORTFOLIO_THRESHOLD_SCORE = "75"
@@ -15,6 +18,13 @@ app = "stock-analysis-bot"
   memory_mb = 2048
   min_instances = 1
   max_instances = 1
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
 
 [services]
   internal_port = 8080
