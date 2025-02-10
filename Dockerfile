@@ -23,5 +23,5 @@ ENV PYTHONPATH=/app
 ENV MALLOC_ARENA_MAX=2
 ENV PYTHONMALLOC=malloc
 
-# Run the service
+# Run the service with proper signal handling
 CMD ["python", "-m", "src.main"] 
