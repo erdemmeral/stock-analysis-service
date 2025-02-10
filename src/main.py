@@ -8,11 +8,13 @@ from technical_analysis import TechnicalAnalyzer
 from news_analysis import NewsAnalyzer
 from service.analysis_service import AnalysisService
 import signal
+import sys
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    stream=sys.stdout  # Ensure logs go to stdout
 )
 logger = logging.getLogger(__name__)
 
@@ -211,44 +213,39 @@ def save_results(results: Dict):
 async def shutdown(signal, loop, service):
     """Cleanup tasks tied to the service's shutdown."""
     logger.info(f"Received exit signal {signal.name}...")
-    
     tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
     [task.cancel() for task in tasks]
-    
     logger.info(f"Cancelling {len(tasks)} outstanding tasks")
     await asyncio.gather(*tasks, return_exceptions=True)
     loop.stop()
 
 def handle_exception(loop, context):
-    """Handle exceptions in the event loop."""
     msg = context.get("exception", context["message"])
     logger.error(f"Error in event loop: {msg}")
 
 async def main():
-    # Initialize service
-    service = AnalysisService()
-    
-    # Get event loop
-    loop = asyncio.get_event_loop()
-    
-    # Handle exceptions
-    loop.set_exception_handler(handle_exception)
-    
-    # Register signal handlers
-    signals = (signal.SIGTERM, signal.SIGINT)
-    for s in signals:
-        loop.add_signal_handler(
-            s, lambda s=s: asyncio.create_task(shutdown(s, loop, service))
-        )
-    
     try:
-        # Start the service
+        service = AnalysisService()
+        
+        # Get event loop
+        loop = asyncio.get_event_loop()
+        
+        # Handle exceptions
+        loop.set_exception_handler(handle_exception)
+        
+        # Register signal handlers
+        signals = (signal.SIGTERM, signal.SIGINT)
+        for s in signals:
+            loop.add_signal_handler(
+                s, lambda s=s: asyncio.create_task(shutdown(s, loop, service))
+            )
+        
         logger.info("Starting analysis service...")
         await service.run_analysis_loop()
+        
     except Exception as e:
         logger.error(f"Service error: {e}")
-    finally:
-        logger.info("Shutting down...")
+        sys.exit(1)
 
 if __name__ == "__main__":
     try:
@@ -256,4 +253,5 @@ if __name__ == "__main__":
     except KeyboardInterrupt:
         logger.info("Service stopped by user")
     except Exception as e:
-        logger.error(f"Service error: {e}") 
+        logger.error(f"Service error: {e}")
+        sys.exit(1) 

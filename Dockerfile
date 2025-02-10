@@ -6,7 +6,6 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc \
     python3-dev \
-    netcat \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
@@ -24,16 +23,5 @@ ENV PYTHONPATH=/app
 ENV MALLOC_ARENA_MAX=2
 ENV PYTHONMALLOC=malloc
 
-# Add health check script
-COPY healthcheck.sh /healthcheck.sh
-RUN chmod +x /healthcheck.sh
-
-# Add startup script
-COPY start.sh /start.sh
-RUN chmod +x /start.sh
-
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD /healthcheck.sh
-
 # Run the service
-CMD ["/start.sh"] 
+CMD ["python", "-m", "src.main"] 
