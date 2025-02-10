@@ -11,8 +11,23 @@ app = "stock-analysis-service"
 [env]
   ANALYSIS_INTERVAL = "3600"  # 1 hour in seconds
   PORTFOLIO_THRESHOLD_SCORE = "75"
+  PYTHONUNBUFFERED = "1"
 
 [processes]
-  app = "python -m src.main"  # Define the app process
+  worker = "python -m src.main"
+
+# Add health check process
+[checks]
+  [checks.worker]
+    grace_period = "30s"
+    interval = "15s"
+    method = "tcp"
+    port = 8080
+    timeout = "2s"
+    type = "tcp"
+
+# Add logging
+[logging]
+  level = "debug"
 
 # Remove all HTTP service and health check configurations since this is a background service 
