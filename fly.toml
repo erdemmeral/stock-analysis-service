@@ -36,4 +36,8 @@ primary_region = "fra"
 [logging]
   level = "debug"
 
+# Define the process to run
+[processes]
+  app = "python -m src.main"
+
 # Remove all HTTP service and health check configurations since this is a background service 
