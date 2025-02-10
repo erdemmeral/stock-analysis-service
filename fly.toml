@@ -1,4 +1,4 @@
-app = "stock-analysis-service"
+app = "stock-analysis-bot"
 
 [env]
   ANALYSIS_INTERVAL = "3600"  # 1 hour in seconds
