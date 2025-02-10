@@ -3,10 +3,10 @@ import logging
 import json
 from datetime import datetime
 from typing import List, Dict
-from fundamental_analysis import FundamentalAnalyzer
-from technical_analysis import TechnicalAnalyzer
-from news_analysis import NewsAnalyzer
-from service.analysis_service import AnalysisService
+from .fundamental_analysis import FundamentalAnalyzer
+from .technical_analysis import TechnicalAnalyzer
+from .news_analysis import NewsAnalyzer
+from .service.analysis_service import AnalysisService
 import signal
 import sys
 
