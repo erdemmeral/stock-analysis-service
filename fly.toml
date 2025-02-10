@@ -7,10 +7,6 @@ app = "stock-analysis-bot"
   ANALYSIS_INTERVAL = "3600"  # 1 hour in seconds
   PORTFOLIO_THRESHOLD_SCORE = "75"
 
-# Specify machine size
-[build]
-  builder = "paketobuildpacks/builder:base"
-
 # Configure VM resources
 [[vm]]
   cpu_kind = "shared"
