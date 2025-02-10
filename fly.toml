@@ -6,19 +6,31 @@ primary_region = "fra"
 [build]
   dockerfile = "Dockerfile"
 
+# Define app as a background service
+[experimental]
+  auto_rollback = true
+  enable_consul = false
+
+# Configure single VM
 [[vm]]
   cpu_kind = "shared"
   cpu_cores = 4
   memory_mb = 2048
+  min_machines_running = 1
+  max_machines_running = 1
 
 [env]
   ANALYSIS_INTERVAL = "3600"  # 1 hour in seconds
   PORTFOLIO_THRESHOLD_SCORE = "75"
   PYTHONUNBUFFERED = "1"
 
-# Remove processes section since it's causing confusion with app type
-# [processes]
-#   worker = "python -m src.main"
+# Define as a background service
+[services]
+  internal_port = 8080
+  protocol = "tcp"
+
+  [[services.ports]]
+    port = "8080"
 
 # Add logging
 [logging]
