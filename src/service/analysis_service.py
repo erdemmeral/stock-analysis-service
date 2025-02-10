@@ -27,6 +27,10 @@ class AnalysisService:
         self.db = Database()  # Your backend database connection
         self.last_fundamental_run = None
         
+        # Add configuration properties
+        self.analysis_interval = TECHNICAL_ANALYSIS_INTERVAL
+        self.portfolio_threshold = PORTFOLIO_THRESHOLD_SCORE
+        
     async def send_telegram_alert(self, message: str):
         """Send alert to Telegram channel"""
         try:
@@ -82,7 +86,7 @@ class AnalysisService:
                     )
                     
                     # Check if stock should be in portfolio
-                    if combined_score >= PORTFOLIO_THRESHOLD_SCORE:
+                    if combined_score >= self.portfolio_threshold:
                         if not await self.db.is_in_portfolio(ticker):
                             await self.handle_portfolio_addition(
                                 ticker, 
@@ -150,7 +154,7 @@ class AnalysisService:
                 await self.analyze_watchlist()
                 
                 # Wait for next technical analysis interval
-                await asyncio.sleep(TECHNICAL_ANALYSIS_INTERVAL)
+                await asyncio.sleep(self.analysis_interval)
                 
             except Exception as e:
                 logger.error(f"Error in analysis loop: {e}")

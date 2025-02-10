@@ -227,6 +227,17 @@ async def main():
     try:
         service = AnalysisService()
         
+        # Send startup notification
+        startup_message = (
+            "🚀 <b>Stock Analysis Service Started</b> 🚀\n"
+            f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"Region: FRA\n"
+            f"Analysis Interval: {service.analysis_interval} seconds\n"
+            f"Portfolio Threshold: {service.portfolio_threshold}\n"
+            "Status: Ready to analyze stocks 📊"
+        )
+        await service.send_telegram_alert(startup_message)
+        
         # Get event loop
         loop = asyncio.get_event_loop()
         
