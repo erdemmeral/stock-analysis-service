@@ -1,33 +1,28 @@
+# fly.toml app configuration file
 app = "stock-analysis-service"
-
-# Add primary region configuration
 primary_region = "fra"
 
 [build]
   dockerfile = "Dockerfile"
-
-# Define app as a background service
-[experimental]
-  auto_rollback = true
-  enable_consul = false
-
-# Configure single VM
-[[vm]]
-  cpu_kind = "shared"
-  cpu_cores = 4
-  memory_mb = 2048
-  min_machines_running = 1
-  max_machines_running = 1
 
 [env]
   ANALYSIS_INTERVAL = "3600"  # 1 hour in seconds
   PORTFOLIO_THRESHOLD_SCORE = "75"
   PYTHONUNBUFFERED = "1"
 
-# Define as a background service
+[processes]
+  app = "python -m src.main"
+
+[[vm]]
+  memory = "2gb"
+  cpu_kind = "shared"
+  cpus = 4
+
+# Define service with process
 [services]
   internal_port = 8080
   protocol = "tcp"
+  processes = ["app"]  # Specify which process this service runs
 
   [[services.ports]]
     port = "8080"
@@ -35,9 +30,5 @@ primary_region = "fra"
 # Add logging
 [logging]
   level = "debug"
-
-# Define the process to run
-[processes]
-  app = "python -m src.main"
 
 # Remove all HTTP service and health check configurations since this is a background service 
