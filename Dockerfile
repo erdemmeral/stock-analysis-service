@@ -13,9 +13,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt && \
     pip list  # Verify installed packages
 
-# Download NLTK data
-RUN python -c "import nltk; nltk.download('punkt'); nltk.download('averaged_perceptron_tagger'); nltk.download('vader_lexicon')"
-
 # Copy application code
 COPY . .
 
@@ -24,7 +21,7 @@ ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
 
 # Set resource limits
-ENV MALLOC_ARENA_MAX=2
+ENV MALLOC_ARENA_MAX=1
 ENV PYTHONMALLOC=malloc
 
 # Run the service
