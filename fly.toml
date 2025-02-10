@@ -17,18 +17,8 @@ primary_region = "fra"
   memory = "2gb"
   cpu_kind = "shared"
   cpus = 4
+  min_machines_running = 1
+  max_machines_running = 1
 
-# Define service with process
-[services]
-  internal_port = 8080
-  protocol = "tcp"
-  processes = ["app"]  # Specify which process this service runs
-
-  [[services.ports]]
-    port = "8080"
-
-# Add logging
 [logging]
-  level = "debug"
-
-# Remove all HTTP service and health check configurations since this is a background service 
+  level = "debug" 
