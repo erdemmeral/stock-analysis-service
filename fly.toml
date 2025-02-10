@@ -16,10 +16,12 @@ app = "stock-analysis-service"
   internal_port = 8080
   force_https = true
   min_machines_running = 1
+  processes = ["app"]  # Define which process this service runs
 
 [services]
   internal_port = 8080
   protocol = "tcp"
+  processes = ["app"]  # Specify which process this service runs
 
 [[services.ports]]
   handlers = ["http"]
@@ -50,7 +52,7 @@ app = "stock-analysis-service"
 
 # Resource allocation limits
 [processes]
-  web = "python -m src.main"
+  app = "python -m src.main"  # Define the app process
 
 [metrics]
   port = 9091
