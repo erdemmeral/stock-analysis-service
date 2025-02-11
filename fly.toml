@@ -1,8 +1,6 @@
 # fly.toml app configuration file
 app = "stock-analysis-service"
 primary_region = "fra"
-kill_signal = "SIGINT"
-kill_timeout = 5
 
 [build]
   dockerfile = "Dockerfile"
@@ -12,18 +10,15 @@ kill_timeout = 5
   PORTFOLIO_THRESHOLD_SCORE = "75"
   PYTHONUNBUFFERED = "1"
 
-# Define as a background worker
-[experimental]
-  cmd = ["python", "-m", "src.main"]
-  entrypoint = ["python", "-m", "src.main"]
-  auto_rollback = true
+# Define the process
+[processes]
+  worker = "python -m src.main"
 
 [[vm]]
   memory = "2gb"
   cpu_kind = "shared"
   cpus = 4
   min_machines_running = 1
-  max_machines_running = 1
 
 [logging]
   level = "debug" 
