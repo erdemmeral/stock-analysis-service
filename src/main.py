@@ -9,7 +9,7 @@ from .news_analysis import NewsAnalyzer
 from .service.analysis_service import AnalysisService
 import signal
 import sys
-from ..config import (
+from src.config import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHANNEL_ID,
     TECHNICAL_ANALYSIS_INTERVAL,
