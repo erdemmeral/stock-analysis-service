@@ -10,15 +10,14 @@ primary_region = "fra"
   PORTFOLIO_THRESHOLD_SCORE = "75"
   PYTHONUNBUFFERED = "1"
 
-# Define the process
+# Configure as a worker process
 [processes]
-  worker = "python -m src.main"
-
-[[vm]]
-  memory = "2gb"
-  cpu_kind = "shared"
-  cpus = 4
-  min_machines_running = 1
+  worker = {
+    cmd = "python -m src.main",
+    memory = "2gb",
+    cpu_kind = "shared",
+    cpus = 4
+  }
 
 [logging]
   level = "debug" 
