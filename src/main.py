@@ -261,8 +261,12 @@ async def main():
                 # Run fundamental analysis daily
                 if (service.last_fundamental_run is None or 
                     (current_time - service.last_fundamental_run).total_seconds() >= FUNDAMENTAL_ANALYSIS_INTERVAL):
+                    logger.info("Running scheduled fundamental analysis...")
                     await service.run_fundamental_analysis()
                     service.last_fundamental_run = current_time
+                else:
+                    remaining_time = FUNDAMENTAL_ANALYSIS_INTERVAL - (current_time - service.last_fundamental_run).total_seconds()
+                    logger.info(f"Next fundamental analysis in {remaining_time/3600:.1f} hours")
                 
                 # Sleep until next interval
                 await asyncio.sleep(service.analysis_interval)
