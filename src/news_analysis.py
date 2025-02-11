@@ -1,6 +1,4 @@
 import yfinance as yf
-import requests
-from bs4 import BeautifulSoup
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import torch
 import numpy as np
@@ -13,58 +11,61 @@ logger = logging.getLogger(__name__)
 
 class NewsAnalyzer:
     def __init__(self):
-        """Initialize FinBERT model and tokenizer"""
-        self.tokenizer = AutoTokenizer.from_pretrained("ProsusAI/finbert")
-        self.model = AutoModelForSequenceClassification.from_pretrained("ProsusAI/finbert")
+        """Initialize FinBERT-tone model and tokenizer"""
+        self.tokenizer = AutoTokenizer.from_pretrained("yiyanghkust/finbert-tone")
+        self.model = AutoModelForSequenceClassification.from_pretrained("yiyanghkust/finbert-tone")
+        self.labels = ['negative', 'neutral', 'positive']
         self.model.eval()  # Set to evaluation mode
         
-    def get_full_article_text(self, url: str) -> str:
-        """Get full text content from news article URL"""
-        try:
-            headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-            }
-            
-            response = requests.get(url, headers=headers, timeout=10)
-            soup = BeautifulSoup(response.text, 'html.parser')
-            
-            # Extract text based on common article containers
-            article_content = soup.find(['article', 'main', 'div'], 
-                                     {'class': ['article', 'content', 'article-content']})
-            if article_content:
-                return article_content.get_text(separator=' ', strip=True)
-        
-            return None
-        except Exception as e:
-            logger.error(f"Error fetching article content: {e}")
-        return None
-
     def analyze_article_sentiment(self, text: str) -> Dict:
-        """Analyze sentiment of article text using FinBERT"""
+        """Analyze sentiment of article text using FinBERT-tone"""
         try:
-            # Truncate text to max length
+            # Truncate text to model's maximum length
             max_length = 512
-            inputs = self.tokenizer(text, return_tensors="pt", max_length=max_length, 
-                                  truncation=True, padding=True)
+            inputs = self.tokenizer(text, 
+                                  return_tensors="pt", 
+                                  truncation=True, 
+                                  max_length=max_length)
             
+            # Get model outputs
             with torch.no_grad():
                 outputs = self.model(**inputs)
-                predictions = torch.nn.functional.softmax(outputs.logits, dim=-1)
-                
-            # Get sentiment scores (positive, negative, neutral)
-            scores = predictions[0].numpy()
+                probabilities = torch.nn.functional.softmax(outputs.logits, dim=1)
             
-            # Calculate weighted sentiment score (-1 to 1)
-            sentiment_score = (scores[0] - scores[1]) * (1 - scores[2])
+            # Convert to numpy for easier handling
+            probs = probabilities.detach().numpy()[0]
+            
+            # Get predicted label and confidence
+            predicted_class = np.argmax(probs)
+            confidence = float(probs[predicted_class])
+            
+            # Map sentiment scores:
+            # negative: -1.0
+            # neutral: 0.0
+            # positive: 1.0
+            sentiment_mapping = {
+                0: -1.0,  # negative
+                1: 0.0,   # neutral
+                2: 1.0    # positive
+            }
+            sentiment_score = sentiment_mapping[predicted_class]
+            
+            logger.info(f"Sentiment Analysis - Label: {self.labels[predicted_class]}, Score: {sentiment_score}")
+            logger.debug(f"Probabilities - Neg: {probs[0]:.3f}, Neu: {probs[1]:.3f}, Pos: {probs[2]:.3f}")
             
             return {
-                'sentiment_score': float(sentiment_score),
-                'positive': float(scores[0]),
-                'negative': float(scores[1]),
-                'neutral': float(scores[2])
+                'label': self.labels[predicted_class],
+                'confidence': confidence,
+                'sentiment_score': sentiment_score,
+                'probabilities': {
+                    'negative': float(probs[0]),
+                    'neutral': float(probs[1]),
+                    'positive': float(probs[2])
+                }
             }
+            
         except Exception as e:
-            logger.error(f"Error analyzing sentiment: {e}")
+            logger.error(f"Error in sentiment analysis: {e}")
             return None
 
     def get_stock_news(self, ticker: str, days: int = 30) -> List[Dict]:
@@ -87,28 +88,84 @@ class NewsAnalyzer:
             
             analyzed_news = []
             for article in recent_news:
-                # Get full article text
-                full_text = self.get_full_article_text(article['link'])
-                if not full_text:
+                try:
+                    # Analyze sentiment using only the title
+                    sentiment = self.analyze_article_sentiment(article['title'])
+                    if not sentiment:
+                        continue
+                    
+                    analyzed_news.append({
+                        'title': article['title'],
+                        'date': datetime.fromtimestamp(article['providerPublishTime']).strftime('%Y-%m-%d'),
+                        'source': article.get('publisher', ''),
+                        'sentiment': sentiment
+                    })
+                    
+                except Exception as e:
+                    logger.warning(f"Error processing article {article['title']}: {e}")
                     continue
-                
-                # Analyze sentiment
-                sentiment = self.analyze_article_sentiment(full_text)
-                if not sentiment:
-                    continue
-                
-                analyzed_news.append({
-                    'title': article['title'],
-                    'date': datetime.fromtimestamp(article['providerPublishTime']).strftime('%Y-%m-%d'),
-                    'link': article['link'],
-                    'sentiment': sentiment
-                })
             
             return analyzed_news
             
         except Exception as e:
             logger.error(f"Error getting news for {ticker}: {e}")
             return []
+
+    def calculate_relevance(self, news_item: Dict) -> float:
+        """Calculate relevance score for a news item"""
+        try:
+            # Base relevance starts at 1.0
+            relevance = 1.0
+            
+            # Check title keywords
+            title = news_item.get('title', '').lower()
+            important_keywords = {
+                'earnings': 1.5,
+                'revenue': 1.3,
+                'profit': 1.3,
+                'guidance': 1.2,
+                'upgrade': 1.4,
+                'downgrade': 1.4,
+                'acquisition': 1.5,
+                'merger': 1.5,
+                'lawsuit': 1.3,
+                'fda': 1.4,
+                'patent': 1.3,
+                'contract': 1.3
+            }
+            
+            # Adjust relevance based on keywords
+            for keyword, multiplier in important_keywords.items():
+                if keyword in title:
+                    relevance *= multiplier
+            
+            # Time decay factor (newer news is more relevant)
+            news_date = datetime.fromisoformat(news_item.get('date', datetime.now().isoformat()))
+            days_old = (datetime.now() - news_date).days
+            time_decay = max(0.5, 1.0 - (days_old * 0.1))  # Minimum 0.5 relevance
+            relevance *= time_decay
+            
+            # Source credibility factor
+            source = news_item.get('source', '').lower()
+            credible_sources = {
+                'reuters': 1.3,
+                'bloomberg': 1.3,
+                'wsj': 1.3,
+                'cnbc': 1.2,
+                'marketwatch': 1.2,
+                'fool.com': 0.9,
+                'seekingalpha': 0.9,
+                'benzinga': 0.9
+            }
+            source_factor = credible_sources.get(source, 1.0)
+            relevance *= source_factor
+            
+            # Cap maximum relevance at 2.0
+            return min(2.0, relevance)
+            
+        except Exception as e:
+            logger.error(f"Error calculating relevance: {e}")
+            return 1.0
 
     def calculate_news_score(self, articles: List[Dict]) -> Dict:
         """Calculate overall news sentiment score with time-based weighting"""
@@ -199,70 +256,126 @@ class NewsAnalyzer:
             }
 
     def analyze_stock_news(self, ticker: str) -> Dict:
-        """Analyze news sentiment for a stock"""
+        """Analyze news for a given stock"""
         try:
             logger.info(f"Starting news analysis for {ticker}")
+            
+            # Get news data
             news_items = self.get_stock_news(ticker)
+            if not news_items:
+                return {'news_score': 50, 'sentiment': 'neutral', 'items': []}
+            
             logger.info(f"Found {len(news_items)} news items for {ticker}")
             
-            if not news_items:
-                logger.warning(f"No news found for {ticker}")
-                return {'news_score': 50, 'sentiment_details': {}}
+            # Process each news item
+            processed_items = []
+            total_sentiment = 0
+            total_relevance = 0
             
-            total_score = 0
-            news_details = []
-            
-            for idx, news in enumerate(news_items, 1):
-                # Analyze each news item
-                sentiment = self.analyze_article_sentiment(news['title'] + ' ' + news['link'])['sentiment_score']
-                relevance = self.calculate_relevance(news, ticker)
-                recency = self.calculate_recency(news['date'])
+            for item in news_items:
+                # Get sentiment from pre-analyzed news
+                sentiment_data = item['sentiment']
                 
-                # Calculate weighted score for this news item
-                item_score = sentiment * relevance * recency
+                # Log sentiment details for debugging
+                logger.info(f"Article: {item['title']}")
+                logger.info(f"Sentiment Label: {sentiment_data['label']}")
+                logger.info(f"Sentiment Score: {sentiment_data['sentiment_score']}")
                 
-                news_details.append({
-                    'title': news['title'],
-                    'date': news['date'],
-                    'sentiment': sentiment,
-                    'relevance': relevance,
-                    'recency': recency,
-                    'final_score': item_score
+                # Calculate relevance
+                relevance = self.calculate_relevance(item)
+                
+                # Weight sentiment by relevance
+                total_sentiment += sentiment_data['sentiment_score'] * relevance
+                total_relevance += relevance
+                
+                processed_items.append({
+                    'title': item['title'],
+                    'date': item['date'],
+                    'source': item['source'],
+                    'sentiment': sentiment_data['sentiment_score'],
+                    'sentiment_label': sentiment_data['label'],
+                    'confidence': sentiment_data['confidence'],
+                    'relevance': relevance
                 })
-                
-                logger.info(f"News {idx}/{len(news_items)}:")
-                logger.info(f"Title: {news['title']}")
-                logger.info(f"Date: {news['date']}")
-                logger.info(f"Sentiment: {sentiment:.2f}")
-                logger.info(f"Relevance: {relevance:.2f}")
-                logger.info(f"Recency: {recency:.2f}")
-                logger.info(f"Item Score: {item_score:.2f}")
-                
-                total_score += item_score
             
-            # Calculate final score (0-100)
-            final_score = (total_score / len(news_items)) * 100
-            final_score = max(0, min(100, final_score))  # Ensure between 0-100
+            # Sort by relevance and recency
+            processed_items.sort(key=lambda x: (x['relevance'], x['date']), reverse=True)
             
-            logger.info(f"\nFinal News Analysis for {ticker}:")
-            logger.info(f"Total news items processed: {len(news_items)}")
-            logger.info(f"Average sentiment score: {final_score:.2f}")
-            logger.info("Top scoring news items:")
+            # Calculate final weighted sentiment score (0-100)
+            if total_relevance > 0:
+                weighted_sentiment = (total_sentiment / total_relevance)
+                news_score = 50 + (weighted_sentiment * 25)  # Convert to 0-100 scale
+            else:
+                news_score = 50
             
-            # Sort and log top news items
-            sorted_news = sorted(news_details, key=lambda x: x['final_score'], reverse=True)
-            for idx, news in enumerate(sorted_news[:3], 1):
-                logger.info(f"{idx}. Score: {news['final_score']:.2f} - {news['title']}")
+            # Determine overall sentiment
+            if news_score >= 65:
+                sentiment = 'positive'
+            elif news_score <= 35:
+                sentiment = 'negative'
+            else:
+                sentiment = 'neutral'
+            
+            logger.info(f"News analysis complete for {ticker} - Score: {news_score:.2f}, Sentiment: {sentiment}")
             
             return {
-                'news_score': final_score,
-                'sentiment_details': {
-                    'total_news': len(news_items),
-                    'news_items': news_details,
-                    'top_news': sorted_news[:3]
-                }
+                'news_score': news_score,
+                'sentiment': sentiment,
+                'items': processed_items[:5]  # Return top 5 most relevant items
             }
             
         except Exception as e:
             logger.error(f"Error analyzing news for {ticker}: {e}")
-            return {'news_score': 50, 'sentiment_details': {}} 
+            return {
+                'news_score': 50,
+                'sentiment': 'neutral',
+                'items': []
+            }
+
+def run_test_analysis():
+    """Test function to verify news analysis"""
+    logger.info("Starting news analysis test...")
+    
+    # Initialize analyzer
+    analyzer = NewsAnalyzer()
+    
+    # Test with a well-known stock
+    test_ticker = "AAPL"
+    
+    try:
+        # Get and analyze news
+        analysis = analyzer.analyze_stock_news(test_ticker)
+        
+        print("\n=== News Analysis Test Results ===")
+        print(f"Stock: {test_ticker}")
+        
+        print("\n1. Overall Metrics:")
+        print(f"News Score: {analysis['news_score']:.2f}")
+        print(f"Overall Sentiment: {analysis['sentiment']}")
+        
+        print("\n2. Recent Articles:")
+        for item in analysis['items']:
+            print(f"\nTitle: {item['title']}")
+            print(f"Date: {item['date']}")
+            print(f"Source: {item['source']}")
+            print(f"Sentiment Label: {item['sentiment_label']}")
+            print(f"Sentiment Score: {item['sentiment']:.2f}")
+            print(f"Confidence: {item['confidence']:.2f}")
+            print(f"Relevance Score: {item['relevance']:.2f}")
+        
+        print("\n=== Test Complete ===")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Test failed with exception: {str(e)}")
+        logger.error(f"Exception type: {type(e)}")
+        import traceback
+        logger.error(f"Traceback: {traceback.format_exc()}")
+        return False
+
+if __name__ == "__main__":
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    run_test_analysis() 

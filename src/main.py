@@ -235,7 +235,6 @@ async def main():
     try:
         service = AnalysisService()
         
-        # Send startup notification
         startup_message = (
             "🚀 <b>Stock Analysis Service Started</b> 🚀\n"
             f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
@@ -289,11 +288,94 @@ async def main():
         logger.error(f"Service error: {e}")
         sys.exit(1)
 
-if __name__ == "__main__":
+async def test_main():
+    """Test main program functionality"""
     try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Service stopped by user")
+        service = AnalysisService()
+        
+        # Test 1: Configuration
+        logger.info("Testing configuration...")
+        from config import verify_config
+        if not verify_config():
+            logger.error("Configuration test failed")
+            return False
+            
+        # Test 2: Watchlist loading
+        logger.info("Testing watchlist loading...")
+        watchlist = await service.get_watchlist()
+        if not isinstance(watchlist, list):
+            logger.error("Watchlist loading failed")
+            return False
+            
+        # Test 3: Analysis pipeline
+        logger.info("Testing analysis pipeline...")
+        test_ticker = "AAPL"
+        
+        # Technical analysis
+        tech_analyzer = service.tech_analyzer
+        tech_analysis = tech_analyzer.analyze_stock(test_ticker)
+        if not tech_analysis:
+            logger.error("Technical analysis failed")
+            return False
+            
+        # News analysis
+        news_analyzer = service.news_analyzer
+        news_analysis = news_analyzer.analyze_stock_news(test_ticker)
+        if not news_analysis:
+            logger.error("News analysis failed")
+            return False
+            
+        # Test 4: Telegram notifications
+        logger.info("Testing Telegram notifications...")
+        try:
+            await service.send_telegram_alert("🔧 Test message from stock analysis system")
+            logger.info("Telegram notification test passed")
+        except Exception as e:
+            logger.error(f"Telegram notification test failed: {e}")
+            return False
+            
+        logger.info("All main program tests passed successfully!")
+        return True
+        
     except Exception as e:
-        logger.error(f"Service error: {e}")
-        sys.exit(1) 
+        logger.error(f"Main program test failed: {e}")
+        return False
+
+def parse_args():
+    """Parse command line arguments"""
+    import argparse
+    parser = argparse.ArgumentParser(description='Stock Analysis Service')
+    parser.add_argument('--test', action='store_true', help='Run tests only')
+    parser.add_argument('--debug', action='store_true', help='Run in debug mode')
+    return parser.parse_args()
+
+if __name__ == "__main__":
+    args = parse_args()
+    
+    # Configure logging
+    logging.basicConfig(
+        level=logging.DEBUG if args.debug else logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    if args.test:
+        # Run all tests
+        logger.info("Running tests...")
+        
+        # Run technical analysis tests
+        from .technical_analysis import run_component_tests
+        tech_tests_passed = run_component_tests()
+        
+        # Run main program tests
+        main_tests_passed = asyncio.run(test_main())
+        
+        if tech_tests_passed and main_tests_passed:
+            logger.info("All tests passed successfully!")
+            sys.exit(0)
+        else:
+            logger.error("Some tests failed!")
+            sys.exit(1)
+    else:
+        # Run the main application
+        logger.info("Starting stock analysis service...")
+        main() 

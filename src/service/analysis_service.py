@@ -29,6 +29,15 @@ class AnalysisService:
         # Add configuration properties
         self.analysis_interval = TECHNICAL_ANALYSIS_INTERVAL
         self.portfolio_threshold = PORTFOLIO_THRESHOLD_SCORE
+        self.watchlist = self._load_watchlist()
+
+    def _load_watchlist(self) -> List[str]:
+        try:
+            with open('stock_tickers.txt', 'r') as f:
+                return [line.strip() for line in f if line.strip()]
+        except Exception as e:
+            logger.error(f"Error loading watchlist: {e}")
+            return []
 
     async def get_watchlist(self):
         """Get watchlist from API"""
@@ -582,49 +591,184 @@ class AnalysisService:
             return False
 
     async def analyze_technical(self):
-        """Run technical analysis on watchlist stocks"""
-        try:
-            # Get watchlist
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f'{PORTFOLIO_API_URL}/watchlist') as response:
-                    if response.status != 200:
-                        logger.error(f"Failed to get watchlist: {response.status}")
-                        return
-                    watchlist = await response.json()
-                    if not watchlist:
-                        logger.info("No stocks in watchlist")
-                        return
-                    
-                    logger.info(f"Running technical analysis on {len(watchlist)} stocks")
-                    logger.info(f"Stocks: {[stock['ticker'] for stock in watchlist]}")
-
-            for stock in watchlist:
-                ticker = stock['ticker']
-                try:
-                    tech_analysis = self.tech_analyzer.analyze_stock(ticker)
-                    logger.info(f"Technical analysis complete for {ticker}")
-                    
-                    # Update watchlist with technical scores
-                    async with aiohttp.ClientSession() as session:
-                        await session.patch(
-                            f'{PORTFOLIO_API_URL}/watchlist/{ticker}',
-                            json={
-                                'technical_score': tech_analysis['technical_score']['total_score'],
-                                'last_technical': datetime.now().isoformat()
-                            }
-                        )
-                    
-                    # Check position criteria with latest news
-                    news_analysis = await self.get_latest_news_analysis(ticker)
-                    if self.should_create_position(tech_analysis, news_analysis):
-                        await self.create_position(ticker, tech_analysis, news_analysis)
-                        
-                except Exception as e:
-                    logger.error(f"Error analyzing {ticker}: {e}")
+        """Run technical analysis on watchlist and check existing positions"""
+        logger.info("Starting technical analysis run...")
+        
+        # 1. First analyze watchlist for new opportunities
+        for ticker in self.watchlist:
+            try:
+                analysis = self.tech_analyzer.analyze_stock(ticker)
+                if not analysis:
                     continue
-                    
+
+                # Update watchlist data
+                update_data = {
+                    "technical_scores": {
+                        "short": analysis['timeframes']['short']['score'],
+                        "medium": analysis['timeframes']['medium']['score'],
+                        "long": analysis['timeframes']['long']['score']
+                    },
+                    "best_timeframe": analysis['summary']['best_timeframe'],
+                    "buy_signal": analysis['summary']['buy_signal'],
+                    "last_analysis": datetime.now().isoformat()
+                }
+                await self._update_watchlist_item(ticker, update_data)
+
+                # Send buy alerts
+                if analysis['summary']['buy_signal']:
+                    await self._send_buy_signal_alert(ticker, analysis)
+
+            except Exception as e:
+                logger.error(f"Error analyzing watchlist stock {ticker}: {e}")
+
+        # 2. Check existing positions for exit signals
+        try:
+            async with aiohttp.ClientSession() as session:
+                # Get all open positions
+                async with session.get(f'{PORTFOLIO_API_URL}/positions?status=open') as response:
+                    if response.status == 200:
+                        positions = await response.json()
+                        
+                        for position in positions:
+                            ticker = position['ticker']
+                            entry_price = position['entry_price']
+                            
+                            # Run fresh analysis
+                            analysis = self.tech_analyzer.analyze_stock(ticker)
+                            if not analysis:
+                                continue
+                                
+                            # Check for exit signals
+                            exit_signals = self._check_exit_signals(
+                                analysis, 
+                                entry_price, 
+                                position['timeframe']
+                            )
+                            
+                            if exit_signals['should_exit']:
+                                # Send exit alert
+                                await self._send_exit_alert(
+                                    ticker, 
+                                    analysis, 
+                                    exit_signals['reason'],
+                                    position
+                                )
+                                
+                                # Update position status
+                                await session.patch(
+                                    f'{PORTFOLIO_API_URL}/positions/{ticker}',
+                                    json={
+                                        'status': 'closed',
+                                        'exit_price': analysis['signals']['current_price'],
+                                        'exit_date': datetime.now().isoformat(),
+                                        'exit_reason': exit_signals['reason']
+                                    }
+                                )
+                                
+                            # Update position metrics
+                            await session.patch(
+                                f'{PORTFOLIO_API_URL}/positions/{ticker}',
+                                json={
+                                    'current_price': analysis['signals']['current_price'],
+                                    'technical_scores': {
+                                        'short': analysis['timeframes']['short']['score'],
+                                        'medium': analysis['timeframes']['medium']['score'],
+                                        'long': analysis['timeframes']['long']['score']
+                                    },
+                                    'last_analysis': datetime.now().isoformat()
+                                }
+                            )
+                            
         except Exception as e:
-            logger.error(f"Error in technical analysis: {e}")
+            logger.error(f"Error checking positions: {e}")
+
+    def _check_exit_signals(self, analysis: Dict, entry_price: float, timeframe: str) -> Dict:
+        """Check for exit signals based on technical analysis"""
+        current_price = analysis['signals']['current_price']
+        timeframe_data = analysis['timeframes'][timeframe]
+        
+        exit_signals = {
+            'should_exit': False,
+            'reason': None
+        }
+        
+        # 1. Score dropped significantly
+        if timeframe_data['score'] < 40:
+            exit_signals['should_exit'] = True
+            exit_signals['reason'] = "Technical score dropped below threshold"
+            return exit_signals
+        
+        # 2. Trend reversed to bearish
+        if 'bearish' in timeframe_data['trend']:
+            exit_signals['should_exit'] = True
+            exit_signals['reason'] = "Trend reversed to bearish"
+            return exit_signals
+        
+        # 3. Stop loss hit (using first support level)
+        stop_loss = analysis['support_resistance']['support'][0]
+        if current_price <= stop_loss:
+            exit_signals['should_exit'] = True
+            exit_signals['reason'] = "Stop loss level reached"
+            return exit_signals
+        
+        # 4. Volatility risk increased
+        if analysis['signals']['volatility']['risk_level'] == 'high' and \
+           analysis['signals']['volatility']['trend'] == 'increasing':
+            exit_signals['should_exit'] = True
+            exit_signals['reason'] = "Volatility risk increased significantly"
+            return exit_signals
+        
+        return exit_signals
+
+    async def _send_exit_alert(self, ticker: str, analysis: Dict, reason: str, position: Dict):
+        """Send exit signal alert to Telegram"""
+        current_price = analysis['signals']['current_price']
+        entry_price = position['entry_price']
+        pnl_pct = ((current_price - entry_price) / entry_price) * 100
+        
+        message = (
+            f"🔔 <b>SELL SIGNAL: {ticker}</b> 🔔\n\n"
+            f"Exit Reason: {reason}\n"
+            f"Entry Price: ${entry_price:.2f}\n"
+            f"Current Price: ${current_price:.2f}\n"
+            f"P&L: {pnl_pct:+.2f}%\n\n"
+            f"Technical Scores:\n"
+            f"Short Term: {analysis['timeframes']['short']['score']:.2f}\n"
+            f"Medium Term: {analysis['timeframes']['medium']['score']:.2f}\n"
+            f"Long Term: {analysis['timeframes']['long']['score']:.2f}\n\n"
+            f"Risk Level: {analysis['signals']['volatility']['risk_level'].upper()}"
+        )
+        await self.send_telegram_alert(message)
+
+    async def _send_buy_signal_alert(self, ticker: str, analysis: Dict):
+        """Send buy signal alert to Telegram"""
+        message = (
+            f"🔔 <b>BUY SIGNAL: {ticker}</b> 🔔\n\n"
+            f"Best Timeframe: {analysis['summary']['best_timeframe'].upper()}\n"
+            f"Score: {analysis['summary']['highest_score']:.2f}\n"
+            f"Current Price: ${analysis['signals']['current_price']:.2f}\n"
+            f"Stop Loss: ${analysis['support_resistance']['support'][0]:.2f}\n\n"
+            f"Timeframe Scores:\n"
+            f"Short Term: {analysis['timeframes']['short']['score']:.2f}\n"
+            f"Medium Term: {analysis['timeframes']['medium']['score']:.2f}\n"
+            f"Long Term: {analysis['timeframes']['long']['score']:.2f}\n\n"
+            f"Risk Level: {analysis['signals']['volatility']['risk_level'].upper()}"
+        )
+        await self.send_telegram_alert(message)
+
+    async def _update_watchlist_item(self, ticker: str, data: Dict):
+        """Update watchlist item in portfolio API"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                url = f"{PORTFOLIO_API_URL}/watchlist/{ticker}"
+                async with session.patch(url, json=data) as response:
+                    if response.status not in (200, 201):
+                        logger.error(f"Error updating {ticker}: {response.status}")
+                        return False
+                    return True
+        except Exception as e:
+            logger.error(f"API error updating {ticker}: {e}")
+            return False
 
     async def monitor_news(self):
         """Continuously monitor news for watchlist stocks"""
@@ -660,4 +804,22 @@ class AnalysisService:
                     
             except Exception as e:
                 logger.error(f"Error in news monitoring: {e}")
-                await asyncio.sleep(60) 
+                await asyncio.sleep(60)
+
+    async def test_integration(self):
+        """Test integration between components"""
+        try:
+            # Test technical analysis
+            tech_analyzer = TechnicalAnalyzer()
+            tech_analysis = tech_analyzer.analyze_stock("AAPL")
+            
+            # Verify analysis results
+            assert tech_analysis is not None
+            assert 'signals' in tech_analysis
+            assert 'technical_score' in tech_analysis
+            
+            logger.info("Integration test passed successfully")
+            return True
+        except Exception as e:
+            logger.error(f"Integration test failed: {e}")
+            return False 
