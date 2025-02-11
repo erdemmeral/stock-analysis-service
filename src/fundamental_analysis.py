@@ -3,6 +3,9 @@ import yfinance as yf
 import pandas as pd
 from tqdm import tqdm
 import time
+import logging
+
+logger = logging.getLogger(__name__)
 
 class FundamentalAnalyzer:
     def __init__(self):
@@ -334,85 +337,80 @@ class FundamentalAnalyzer:
         
         return self.score_fundamentals(minimum_data) 
 
-    def analyze_stocks(self, batch_size=50, sleep_time=60):
-        """
-        Analyzes stocks in batches to avoid rate limiting
-        
-        Args:
-            batch_size (int): Number of stocks to analyze before sleeping
-            sleep_time (int): Seconds to sleep between batches
-        """
-        results = []
-        raw_data = []
-        
-        # Read tickers from file
-        with open('stock_tickers.txt', 'r') as f:
-            tickers = [line.strip() for line in f if line.strip()]
-        
-        # Process in batches
-        for i in range(0, len(tickers), batch_size):
-            batch = tickers[i:i+batch_size]
+    def analyze_stocks(self):
+        """Analyze stocks from stock_tickers.txt"""
+        try:
+            # Read tickers from file
+            with open('stock_tickers.txt', 'r') as f:
+                tickers = [line.strip() for line in f if line.strip()]
             
-            # Show progress bar for current batch
-            print(f"\nProcessing batch {i//batch_size + 1} of {len(tickers)//batch_size + 1}")
-            for ticker in tqdm(batch, desc="Analyzing stocks"):
-                try:
-                    data = self.get_fundamental_data(ticker)
-                    if data is None:  # No gross profit data
-                        raw_data.append({
-                            'ticker': ticker,
-                            'status': 'missing_gross_profit',
-                            'meets_criteria': False
-                        })
-                        continue
-                    
-                    # Check if we have all required metrics
-                    if 'missing_metrics' in data:
-                        raw_data.append({
-                            'ticker': ticker,
-                            'status': 'missing_data',
-                            'missing_metrics': data['missing_metrics'],
-                            'raw_metrics': data
-                        })
-                        continue
-                    
-                    score = self.score_fundamentals(data)
-                    
-                    raw_data.append({
-                        'ticker': ticker,
-                        'status': 'analyzed',
-                        'score': score,
-                        'raw_metrics': data,
-                        'meets_criteria': score > 0
-                    })
-                    
-                    if score > 0:
-                        results.append({
-                            'ticker': ticker,
-                            'score': score,
-                            'metrics': data
-                        })
-                except Exception as e:
-                    if "Too Many Requests" in str(e):
-                        print(f"\nRate limit hit, sleeping for {sleep_time} seconds...")
-                        time.sleep(sleep_time)
-                        # Retry this ticker
-                        i -= 1
-                        continue
-                    raw_data.append({
-                        'ticker': ticker,
-                        'status': 'error',
-                        'error': str(e),
-                        'meets_criteria': False
-                    })
-                    print(f"Error analyzing {ticker}: {str(e)}")
-                    continue
+            logger.info(f"Starting fundamental analysis of {len(tickers)} stocks")
             
-            # Sleep between batches
-            if i + batch_size < len(tickers):
-                print(f"\nSleeping for {sleep_time} seconds before next batch...")
-                time.sleep(sleep_time)
+            results = []
+            raw_data = []
+            
+            # Process in batches
+            batch_size = 5
+            for i in range(0, len(tickers), batch_size):
+                batch = tickers[i:i + batch_size]
+                logger.info(f"Processing batch {(i//batch_size)+1} of {(len(tickers)+batch_size-1)//batch_size}")
+                
+                for ticker in tqdm(batch, desc="Analyzing stocks"):
+                    try:
+                        logger.info(f"Analyzing fundamentals for {ticker}")
+                        analysis = self.analyze_stock(ticker)
+                        logger.info(f"{ticker} analysis result: {analysis['status']}")
+                        
+                        if analysis['meets_criteria']:
+                            logger.info(f"{ticker} met criteria with score {analysis['score']}")
+                            results.append({
+                                'ticker': ticker,
+                                'score': analysis['score']
+                            })
+                        else:
+                            logger.info(f"{ticker} did not meet criteria: {analysis.get('status')}")
+                        raw_data.append(analysis)
+                    except Exception as e:
+                        logger.error(f"Error analyzing {ticker}: {e}")
+                        continue
+            
+            logger.info(f"Fundamental analysis complete. {len(results)} stocks met criteria")
+            if results:
+                logger.info(f"Stocks that passed: {[r['ticker'] for r in results]}")
+            return results, raw_data
+            
+        except Exception as e:
+            logger.error(f"Error in fundamental analysis: {e}")
+            return [], []
+
+    def analyze_stock(self, ticker: str) -> Dict:
+        """
+        Analyzes a single stock and returns a dictionary with analysis results
+        """
+        data = self.get_fundamental_data(ticker)
+        if data is None:
+            return {
+                'ticker': ticker,
+                'status': 'missing_gross_profit',
+                'meets_criteria': False
+            }
         
-        # Sort results by score
-        results.sort(key=lambda x: x['score'], reverse=True)
-        return results, raw_data 
+        # Check if we have all required metrics
+        if 'missing_metrics' in data:
+            return {
+                'ticker': ticker,
+                'status': 'missing_data',
+                'missing_metrics': data['missing_metrics'],
+                'raw_metrics': data,
+                'meets_criteria': False
+            }
+        
+        score = self.score_fundamentals(data)
+        
+        return {
+            'ticker': ticker,
+            'status': 'analyzed',
+            'score': score,
+            'raw_metrics': data,
+            'meets_criteria': score > 0
+        } 
