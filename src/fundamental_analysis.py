@@ -356,7 +356,7 @@ class FundamentalAnalyzer:
             raw_data = []
             
             # Process in batches
-            batch_size = 30  # Increased batch size
+            batch_size = 30
             for i in range(0, len(tickers), batch_size):
                 batch = tickers[i:i + batch_size]
                 logger.info(f"Processing batch {(i//batch_size)+1} of {(len(tickers)+batch_size-1)//batch_size}")
@@ -382,8 +382,8 @@ class FundamentalAnalyzer:
                 
                 # Sleep between batches (except after the last batch)
                 if i + batch_size < len(tickers):
-                    logger.info("Sleeping 60 seconds between batches...")
-                    time.sleep(60)
+                    logger.info("Sleeping 45 seconds between batches...")
+                    time.sleep(45)
             
             logger.info(f"Fundamental analysis complete. {len(results)} stocks met criteria")
             if results:

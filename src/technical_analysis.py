@@ -196,63 +196,69 @@ class TechnicalAnalyzer:
 
     def _combine_timeframe_analyses(self, analyses: Dict) -> Dict:
         """Combine analyses from different timeframes"""
-        if not analyses:
-            return self.get_empty_analysis()
-
-        # Get current timeframe analysis
-        current = analyses[self.timeframe]
-        
-        # Add multi-timeframe trends and find highest score
-        trends = {}
-        highest_score = 0
-        best_timeframe = None
-        
-        for tf, analysis in analyses.items():
-            score = analysis['technical_score']['total']
-            trend = analysis['signals']['trend']['direction']
-            trends[tf] = trend
+        try:
+            # Get scores for each timeframe
+            timeframe_scores = {}
+            for tf, analysis in analyses.items():
+                timeframe_scores[tf] = {
+                    'score': analysis['technical_score']['total'],
+                    'signals': analysis['signals']
+                }
             
-            if score > highest_score:
-                highest_score = score
-                best_timeframe = tf
-        
-        # Calculate alignment score
-        alignment_score = self._calculate_alignment_score(trends)
-        
-        # Only consider for buy if:
-        # 1. Highest score is above threshold
-        # 2. At least 2 timeframes are aligned
-        # 3. No timeframe is strongly bearish
-        is_valid_setup = (
-            highest_score >= 75 and  # High score threshold
-            alignment_score >= 0.66 and  # At least 2/3 timeframes aligned
-            not any('bearish' in t for t in trends.values())  # No bearish trends
-        )
-        
-        # Adjust final score based on alignment and validity
-        final_score = highest_score * alignment_score if is_valid_setup else 50
-        
-        # Update current analysis
-        current['technical_score']['total'] = final_score
-        current['timeframes'] = {
-            tf: {
-                'trend': analysis['signals']['trend']['direction'],
-                'score': analysis['technical_score']['total'],
-                'is_best': tf == best_timeframe
+            # Determine best timeframe and highest score
+            best_timeframe = max(timeframe_scores.items(), key=lambda x: x[1]['score'])[0]
+            highest_score = timeframe_scores[best_timeframe]['score']
+            
+            # Count bullish timeframes
+            bullish_count = sum(
+                1 for tf_data in timeframe_scores.values()
+                if tf_data['signals']['trend']['direction'] in ['bullish', 'strong_bullish']
+            )
+            
+            # Buy signal conditions - Updated for new RSI interpretation
+            buy_conditions = {
+                'score_threshold': highest_score >= 70,  # High overall score
+                'rsi_condition': any(
+                    tf_data['signals']['momentum']['rsi'] < 40  # Changed: RSI below 40 (potential oversold)
+                    for tf_data in timeframe_scores.values()
+                ),
+                'trend_alignment': bullish_count >= 2,  # At least 2 timeframes show bullish trend
+                'macd_confirmation': any(
+                    tf_data['signals']['trend']['macd'] > tf_data['signals']['trend']['macd_signal']
+                    for tf_data in timeframe_scores.values()
+                ),
+                'volume_confirmation': any(
+                    tf_data['signals']['volume']['profile'] in ['high', 'increasing']
+                    for tf_data in timeframe_scores.values()
+                )
             }
-            for tf, analysis in analyses.items()
-        }
-        
-        # Add summary data
-        current['summary'] = {
-            'highest_score': highest_score,
-            'best_timeframe': best_timeframe,
-            'alignment_score': alignment_score,
-            'is_valid_setup': is_valid_setup,
-            'buy_signal': is_valid_setup and final_score >= 75
-        }
-        
-        return current
+            
+            # Buy signal requires meeting at least 3 conditions
+            buy_signal = sum(buy_conditions.values()) >= 3
+            
+            return {
+                'timeframes': {
+                    tf: {
+                        'score': data['score'],
+                        'trend': data['signals']['trend']['direction']
+                    }
+                    for tf, data in timeframe_scores.items()
+                },
+                'summary': {
+                    'highest_score': highest_score,
+                    'best_timeframe': best_timeframe,
+                    'bullish_timeframes': bullish_count,
+                    'buy_signal': buy_signal,
+                    'conditions_met': sum(buy_conditions.values()),
+                    'buy_conditions': buy_conditions
+                },
+                'signals': timeframe_scores[best_timeframe]['signals'],
+                'support_resistance': analyses[best_timeframe]['support_resistance']
+            }
+            
+        except Exception as e:
+            logger.error(f"Error combining timeframe analyses: {e}")
+            return self.get_empty_analysis()
 
     def _calculate_alignment_score(self, trends: Dict) -> float:
         """Calculate how well timeframes are aligned"""
@@ -331,21 +337,22 @@ class TechnicalAnalyzer:
         rsi = signals['momentum']['rsi']
         stoch_k = signals['momentum']['stochastic']['k']
         
-        # More granular RSI scoring
+        # More granular RSI scoring - Fixed to align with traditional interpretation
         momentum_score = (
-            90 if 30 <= rsi < 40 else    # Strong buy zone
-            80 if 40 <= rsi < 45 else    # Buy zone
-            70 if 45 <= rsi < 50 else    # Weak buy
-            60 if 50 <= rsi < 55 else    # Slightly bullish
-            50 if 55 <= rsi < 60 else    # Neutral
-            40 if 60 <= rsi < 65 else    # Slightly bearish
-            30 if 65 <= rsi < 70 else    # Weak sell
-            20 if 70 <= rsi < 80 else    # Sell zone
-            10                           # Strong sell zone
+            90 if rsi < 30 else         # Strong buy (oversold)
+            80 if 30 <= rsi < 35 else   # Buy zone
+            70 if 35 <= rsi < 40 else   # Weak buy
+            60 if 40 <= rsi < 45 else   # Slightly bullish
+            50 if 45 <= rsi < 55 else   # Neutral
+            40 if 55 <= rsi < 60 else   # Slightly bearish
+            30 if 60 <= rsi < 65 else   # Weak sell
+            20 if 65 <= rsi < 70 else   # Sell zone
+            10                          # Strong sell (overbought >70)
         )
         
-        # Add stochastic influence
-        momentum_score = (momentum_score + (100 - abs(stoch_k - 50)) * 0.5) / 1.5
+        # Add stochastic influence - also aligned with traditional interpretation
+        stoch_score = 100 - abs(stoch_k - 50)  # Higher score when closer to extremes
+        momentum_score = (momentum_score + stoch_score) / 2
 
         # Trend score with MACD influence
         base_trend_score = {
@@ -358,8 +365,8 @@ class TechnicalAnalyzer:
         
         # Adjust trend score based on MACD
         macd_diff = signals['trend']['macd'] - signals['trend']['macd_signal']
-        trend_score = base_trend_score + (macd_diff * 10)  # Adjust score based on MACD difference
-        trend_score = max(0, min(100, trend_score))  # Ensure score stays within 0-100
+        trend_score = base_trend_score + (macd_diff * 10)
+        trend_score = max(0, min(100, trend_score))
 
         # Volume score with volatility influence
         base_volume_score = {
@@ -388,9 +395,9 @@ class TechnicalAnalyzer:
         
         # Add bonus for moving average alignment
         if signals['moving_averages']['aligned']:
-            total_score += 5  # Small bonus for MA alignment
+            total_score += 5
         
-        total_score = max(0, min(100, total_score))  # Ensure final score is within bounds
+        total_score = max(0, min(100, total_score))
 
         return {
             'total': total_score,

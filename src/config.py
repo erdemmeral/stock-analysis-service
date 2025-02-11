@@ -42,6 +42,28 @@ TIMEFRAME_CONFIGS = {
     }
 }
 
+# Add profit target configurations
+PROFIT_TARGETS = {
+    'low_risk': {
+        'first_target': 0.15,    # 15% for first partial exit
+        'final_target': 0.25     # 25% for full exit
+    },
+    'medium_risk': {
+        'first_target': 0.20,    # 20% for first partial exit
+        'final_target': 0.35     # 35% for full exit
+    },
+    'high_risk': {
+        'first_target': 0.25,    # 25% for first partial exit
+        'final_target': 0.50     # 50% for full exit
+    }
+}
+
+# Trailing stop settings
+TRAILING_STOP = {
+    'activation': 0.10,          # Start trailing at 10% profit
+    'distance': 0.05            # 5% trailing distance
+}
+
 # Other configuration... 
 
 def verify_config():
