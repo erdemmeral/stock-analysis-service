@@ -238,21 +238,30 @@ async def main():
         )
         await service.send_telegram_alert(startup_message)
         
-        # Get event loop
-        loop = asyncio.get_event_loop()
+        # Run initial fundamental analysis to create watchlist
+        logger.info("Running initial fundamental analysis...")
+        await service.run_fundamental_analysis()
         
-        # Handle exceptions
-        loop.set_exception_handler(handle_exception)
-        
-        # Register signal handlers
-        signals = (signal.SIGTERM, signal.SIGINT)
-        for s in signals:
-            loop.add_signal_handler(
-                s, lambda s=s: asyncio.create_task(shutdown(s, loop, service))
-            )
-        
-        logger.info("Starting analysis service...")
-        await service.run_analysis_loop()
+        # Start the analysis loop
+        while True:
+            try:
+                current_time = datetime.now()
+                
+                # Run technical and news analysis
+                await service.analyze_watchlist()
+                
+                # Run fundamental analysis daily
+                if (service.last_fundamental_run is None or 
+                    (current_time - service.last_fundamental_run).total_seconds() >= FUNDAMENTAL_ANALYSIS_INTERVAL):
+                    await service.run_fundamental_analysis()
+                    service.last_fundamental_run = current_time
+                
+                # Sleep until next interval
+                await asyncio.sleep(service.analysis_interval)
+                
+            except Exception as e:
+                logger.error(f"Error in analysis loop: {e}")
+                await asyncio.sleep(60)  # Wait a minute before retrying
         
     except Exception as e:
         logger.error(f"Service error: {e}")
