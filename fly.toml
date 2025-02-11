@@ -15,3 +15,8 @@ primary_region = 'fra'
   memory = '2gb'
   cpu_kind = 'shared'
   cpus = 4
+
+# Add timeout settings
+[deploy]
+  strategy = "immediate"
+  release_command = ""
