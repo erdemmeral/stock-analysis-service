@@ -240,26 +240,30 @@ async def main():
             "🚀 <b>Stock Analysis Service Started</b> 🚀\n"
             f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
             f"Region: FRA\n"
-            f"Analysis Interval: {service.analysis_interval} seconds\n"
+            f"Technical Analysis Interval: {TECHNICAL_ANALYSIS_INTERVAL/3600:.1f} hours\n"
+            f"News Analysis: Continuous\n"
             f"Fundamental Analysis Interval: {FUNDAMENTAL_ANALYSIS_INTERVAL/3600:.1f} hours\n"
             f"Portfolio Threshold: {service.portfolio_threshold}\n"
             "Status: Ready to analyze stocks 📊"
         )
         await service.send_telegram_alert(startup_message)
         
-        # Run initial fundamental analysis to create watchlist
+        # Run initial fundamental analysis
         logger.info("Running initial fundamental analysis...")
         await service.run_fundamental_analysis()
         service.last_fundamental_run = datetime.now()
         logger.info(f"Initial fundamental analysis completed at {service.last_fundamental_run}")
         
-        # Start the analysis loop
+        # Start the analysis loops
         while True:
             try:
                 current_time = datetime.now()
                 
-                # Run technical and news analysis
-                await service.analyze_watchlist()
+                # Run technical analysis hourly
+                await service.analyze_technical()
+                
+                # Run continuous news analysis in parallel
+                asyncio.create_task(service.monitor_news())
                 
                 # Check if fundamental analysis is due
                 time_since_last = (current_time - service.last_fundamental_run).total_seconds()
@@ -274,8 +278,8 @@ async def main():
                     remaining_time = FUNDAMENTAL_ANALYSIS_INTERVAL - time_since_last
                     logger.info(f"Next fundamental analysis in {remaining_time/3600:.1f} hours")
                 
-                # Sleep until next interval
-                await asyncio.sleep(service.analysis_interval)
+                # Sleep until next technical analysis interval
+                await asyncio.sleep(TECHNICAL_ANALYSIS_INTERVAL)
                 
             except Exception as e:
                 logger.error(f"Error in analysis loop: {e}")

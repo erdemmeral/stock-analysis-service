@@ -110,23 +110,31 @@ class AnalysisService:
     async def analyze_watchlist(self):
         """Run technical and news analysis on watchlist stocks"""
         try:
-            # Get stocks pending technical analysis
+            # Get ALL stocks from watchlist instead of pending
             async with aiohttp.ClientSession() as session:
-                async with session.get(f'{PORTFOLIO_API_URL}/watchlist/pending/technical') as response:
+                async with session.get(f'{PORTFOLIO_API_URL}/watchlist') as response:
                     if response.status != 200:
                         logger.error(f"Failed to get watchlist: {response.status}")
                         return
                     try:
                         watchlist = await response.json()
-                        logger.info(f"Retrieved {len(watchlist)} stocks for technical analysis")
+                        if not watchlist:
+                            logger.info("No stocks in watchlist")
+                            return
+                        
+                        logger.info(f"Retrieved {len(watchlist)} stocks for analysis")
+                        # Log the actual tickers for debugging
+                        logger.info(f"Stocks to analyze: {[stock['ticker'] for stock in watchlist]}")
                     except Exception as e:
                         text = await response.text()
                         logger.error(f"Failed to parse watchlist response: {text}")
                         return
 
-            for ticker in watchlist:
+            # Analyze each stock in watchlist
+            for stock in watchlist:
+                ticker = stock['ticker']
                 try:
-                    logger.info(f"Starting full analysis for {ticker}")
+                    logger.info(f"\n=== Starting analysis for {ticker} ===")
                     
                     # Run analyses
                     tech_analysis = self.tech_analyzer.analyze_stock(ticker)
@@ -143,11 +151,12 @@ class AnalysisService:
                     
                     async with aiohttp.ClientSession() as session:
                         # Update watchlist with scores
-                        update_response = await session.patch(
+                        await session.patch(
                             f'{PORTFOLIO_API_URL}/watchlist/{ticker}',
                             json={
                                 'technical_score': tech_analysis['technical_score']['total_score'],
                                 'news_score': news_analysis['news_score'],
+                                'last_analysis': datetime.now().isoformat(),
                                 'notes': f"Last analyzed: {datetime.now().isoformat()}"
                             }
                         )
@@ -479,31 +488,176 @@ class AnalysisService:
         return "Multiple Technical Indicators"
 
     def should_create_position(self, tech_analysis: Dict, news_analysis: Dict) -> bool:
-        """Determine if we should create a position based on multiple criteria"""
         try:
-            # Log all scores for debugging
-            logger.info(f"Checking position criteria:")
-            logger.info(f"Technical Score: {tech_analysis['technical_score']['total_score']}")
-            logger.info(f"News Score: {news_analysis['news_score']}")
-            logger.info(f"Trend Direction: {tech_analysis['trend']['direction']}")
-            logger.info(f"Trend Strength: {tech_analysis['trend']['strength']}")
-            logger.info(f"MACD Signal: {tech_analysis['signals']['trend']['macd_trend']}")
-            logger.info(f"RSI: {tech_analysis['signals']['momentum']['rsi']}")
-
-            # Maybe relax some criteria for testing
+            logger.info(f"\n=== Position Criteria Check ===")
+            
+            # 1. Fundamental Score Check (must be in watchlist)
+            # Stock must have passed fundamental analysis to be in watchlist
+            
+            # 2. Technical Analysis Checks
             tech_score = tech_analysis['technical_score']['total_score']
-            if tech_score < self.portfolio_threshold:
-                logger.info(f"Failed: Technical score {tech_score} below threshold {self.portfolio_threshold}")
-                return False
-
-            # Relax other criteria temporarily
             trend = tech_analysis['trend']
-            if trend['direction'] not in ['bullish', 'strong_bullish']:
-                logger.info(f"Failed: Trend direction {trend['direction']} not bullish")
+            signals = tech_analysis['signals']
+            
+            logger.info(f"Technical Score: {tech_score}")
+            logger.info(f"Trend Direction: {trend['direction']}")
+            logger.info(f"Trend Strength: {trend['strength']}")
+            logger.info(f"RSI: {signals['momentum']['rsi']}")
+            logger.info(f"MACD: {signals['trend']['macd_trend']}")
+            logger.info(f"Volume: {signals['volume']['profile']}")
+
+            # Dynamic Technical Score threshold based on other factors
+            min_tech_score = 75  # Base threshold
+            if trend['direction'] == 'strong_bullish' and news_analysis['news_score'] > 70:
+                min_tech_score = 65  # Lower threshold for strong trends with great news
+            
+            if tech_score < min_tech_score:
+                logger.info(f"❌ Failed: Technical score {tech_score} below threshold {min_tech_score}")
                 return False
 
+            # Trend must be bullish
+            if trend['direction'] not in ['bullish', 'strong_bullish']:
+                logger.info("❌ Failed: Not in bullish trend")
+                return False
+
+            # Dynamic RSI thresholds based on trend strength
+            rsi = signals['momentum']['rsi']
+            rsi_max = 75 if trend['direction'] == 'strong_bullish' else 70
+            if rsi > rsi_max:
+                logger.info(f"❌ Failed: RSI {rsi} above threshold {rsi_max}")
+                return False
+
+            # MACD confirmation
+            if signals['trend']['macd_trend'] != 'bullish':
+                # Allow non-bullish MACD only if all other signals are very strong
+                if not (trend['direction'] == 'strong_bullish' and 
+                       tech_score > 80 and 
+                       news_analysis['news_score'] > 65):
+                    logger.info("❌ Failed: MACD not bullish and other signals not strong enough")
+                    return False
+
+            # Volume requirement based on price action
+            if signals['volume']['profile'] not in ['increasing', 'high']:
+                logger.info("❌ Failed: Volume not supportive")
+                return False
+
+            # 3. News Analysis Checks
+            news_score = news_analysis['news_score']
+            logger.info(f"News Score: {news_score}")
+            
+            # Dynamic news threshold based on technical strength
+            min_news_score = 55 if tech_score > 85 else 60
+            if news_score < min_news_score:
+                logger.info(f"❌ Failed: News score {news_score} below threshold {min_news_score}")
+                return False
+
+            # 4. Support/Resistance Check
+            current_price = float(tech_analysis['signals']['current_price'])
+            resistance = tech_analysis['support_resistance']['resistance']['levels'][0]
+            support = tech_analysis['support_resistance']['support']['levels'][0]
+            
+            # Allow breakout scenarios
+            price_range = resistance - support
+            breakout_threshold = resistance + (price_range * 0.02)  # 2% above resistance
+            
+            if support < current_price < resistance:
+                # Price between support and resistance
+                price_to_resistance = resistance - current_price
+                price_to_support = current_price - support
+                if price_to_support > price_to_resistance:
+                    logger.info("❌ Failed: Price closer to resistance than support")
+                    return False
+            elif current_price > breakout_threshold:
+                # Confirmed breakout
+                logger.info("✅ Breakout scenario detected")
+            else:
+                logger.info("❌ Failed: Price not in optimal position")
+                return False
+
+            logger.info("✅ All criteria passed! Creating position...")
             return True
 
         except Exception as e:
             logger.error(f"Error checking position criteria: {e}")
-            return False 
+            return False
+
+    async def analyze_technical(self):
+        """Run technical analysis on watchlist stocks"""
+        try:
+            # Get watchlist
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'{PORTFOLIO_API_URL}/watchlist') as response:
+                    if response.status != 200:
+                        logger.error(f"Failed to get watchlist: {response.status}")
+                        return
+                    watchlist = await response.json()
+                    if not watchlist:
+                        logger.info("No stocks in watchlist")
+                        return
+                    
+                    logger.info(f"Running technical analysis on {len(watchlist)} stocks")
+                    logger.info(f"Stocks: {[stock['ticker'] for stock in watchlist]}")
+
+            for stock in watchlist:
+                ticker = stock['ticker']
+                try:
+                    tech_analysis = self.tech_analyzer.analyze_stock(ticker)
+                    logger.info(f"Technical analysis complete for {ticker}")
+                    
+                    # Update watchlist with technical scores
+                    async with aiohttp.ClientSession() as session:
+                        await session.patch(
+                            f'{PORTFOLIO_API_URL}/watchlist/{ticker}',
+                            json={
+                                'technical_score': tech_analysis['technical_score']['total_score'],
+                                'last_technical': datetime.now().isoformat()
+                            }
+                        )
+                    
+                    # Check position criteria with latest news
+                    news_analysis = await self.get_latest_news_analysis(ticker)
+                    if self.should_create_position(tech_analysis, news_analysis):
+                        await self.create_position(ticker, tech_analysis, news_analysis)
+                        
+                except Exception as e:
+                    logger.error(f"Error analyzing {ticker}: {e}")
+                    continue
+                    
+        except Exception as e:
+            logger.error(f"Error in technical analysis: {e}")
+
+    async def monitor_news(self):
+        """Continuously monitor news for watchlist stocks"""
+        while True:
+            try:
+                watchlist = await self.get_watchlist()
+                for stock in watchlist:
+                    ticker = stock['ticker']
+                    try:
+                        news_analysis = self.news_analyzer.analyze_stock_news(ticker)
+                        
+                        # Update watchlist with news scores
+                        async with aiohttp.ClientSession() as session:
+                            await session.patch(
+                                f'{PORTFOLIO_API_URL}/watchlist/{ticker}',
+                                json={
+                                    'news_score': news_analysis['news_score'],
+                                    'last_news': datetime.now().isoformat()
+                                }
+                            )
+                        
+                        # If significant news, trigger technical analysis check
+                        if news_analysis['news_score'] > 70:  # Significant positive news
+                            logger.info(f"Significant news for {ticker}, running technical check")
+                            await self.check_position_opportunity(ticker, news_analysis)
+                            
+                    except Exception as e:
+                        logger.error(f"Error monitoring news for {ticker}: {e}")
+                        continue
+                        
+                # Small delay between news checks
+                await asyncio.sleep(30)
+                    
+            except Exception as e:
+                logger.error(f"Error in news monitoring: {e}")
+                await asyncio.sleep(60) 
