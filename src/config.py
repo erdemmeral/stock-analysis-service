@@ -17,9 +17,6 @@ TELEGRAM_CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID')
 # Portfolio API URL
 PORTFOLIO_API_URL = os.getenv('PORTFOLIO_API_URL', 'https://portfolio-tracker-rough-dawn-5271.fly.dev/api')
 
-# API Keys
-ALPHA_VANTAGE_KEY = os.getenv('ALPHA_VANTAGE_KEY')
-FINNHUB_KEY = os.getenv('FINNHUB_KEY')
-NEWS_API_KEY = os.getenv('NEWS_API_KEY')
+
 
 # Other configuration... 
