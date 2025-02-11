@@ -69,16 +69,36 @@ class AnalysisService:
             logger.info("Running fundamental analysis...")
             fund_results, raw_data = self.fund_analyzer.analyze_stocks()
             
-            # Add stocks to watchlist with fundamental scores
+            # Add or update stocks in watchlist with fundamental scores
             async with aiohttp.ClientSession() as session:
                 for stock in fund_results:
-                    await session.post(
-                        f'{PORTFOLIO_API_URL}/watchlist',
-                        json={
-                            'ticker': stock['ticker'],
-                            'fundamental_score': stock['score']
-                        }
-                    )
+                    try:
+                        # Check if stock exists in watchlist
+                        check_response = await session.get(f'{PORTFOLIO_API_URL}/watchlist/{stock["ticker"]}')
+                        
+                        if check_response.status == 200:
+                            # Update existing stock
+                            logger.info(f"Updating {stock['ticker']} in watchlist")
+                            await session.patch(
+                                f'{PORTFOLIO_API_URL}/watchlist/{stock["ticker"]}',
+                                json={
+                                    'fundamental_score': stock['score'],
+                                    'notes': f"Fundamental analysis updated: {datetime.now().isoformat()}"
+                                }
+                            )
+                        else:
+                            # Add new stock
+                            logger.info(f"Adding {stock['ticker']} to watchlist")
+                            await session.post(
+                                f'{PORTFOLIO_API_URL}/watchlist',
+                                json={
+                                    'ticker': stock['ticker'],
+                                    'fundamental_score': stock['score']
+                                }
+                            )
+                    except Exception as e:
+                        logger.error(f"Error processing {stock['ticker']}: {e}")
+                        continue
             
             logger.info(f"Updated watchlist with {len(fund_results)} stocks")
             return fund_results
