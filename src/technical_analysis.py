@@ -20,75 +20,44 @@ class TechnicalAnalyzer:
         logger.info(f"Initialized TechnicalAnalyzer with {timeframe} timeframe")
 
     def analyze_stock(self, ticker: str) -> Dict:
-        """Analyze a single stock"""
+        """Analyze a stock and return technical analysis results"""
         try:
-            logger.info(f"Starting analysis for {ticker}")
-            # Get historical data
+            # Get stock data
             stock = yf.Ticker(ticker)
-            hist = stock.history(period='2y')
+            hist = stock.history(period='1y', interval='1d')
             
-            if len(hist) < self.indicators[self.timeframe]['ma_long']:
-                logger.warning(f"Insufficient historical data for {ticker}")
-                return {'error': 'Insufficient historical data'}
+            if hist.empty:
+                logger.error(f"No data available for {ticker}")
+                return self.get_empty_analysis()
             
-            # Calculate all indicators and signals
-            signals = self.calculate_indicators(hist)
-            levels = self.find_support_resistance(hist)
+            # Get current price and add to signals
+            current_price = float(hist['Close'].iloc[-1])
+            logger.info(f"{ticker} current price: ${current_price:.2f}")
+            
+            # Calculate all analysis components
+            signals = {
+                'current_price': current_price,  # Add current price here
+                'momentum': self.analyze_momentum(hist),
+                'trend': self.analyze_trend_signals(hist),
+                'volume': self.analyze_volume(hist),
+                'moving_averages': self.analyze_moving_averages(hist)
+            }
+            
             trend = self.analyze_trend(hist)
-            patterns = self._check_patterns(hist)
-            
-            # Get current price and calculate basic metrics
-            current_price = hist['Close'].iloc[-1]
-            volatility = hist['Close'].pct_change().std() * np.sqrt(252)
-            
-            # Generate predictions
-            predictions = {
-                'trend_following': self._trend_following_prediction(signals, trend),
-                'momentum': self._momentum_prediction(signals),
-                'pattern': self._pattern_based_prediction(patterns),
-                'support_resistance': self._sr_based_prediction(levels, current_price)
-            }
-            
-            # Calculate final prediction and confidence
-            weights = {
-                'trend_following': 0.35,
-                'momentum': 0.25,
-                'pattern': 0.20,
-                'support_resistance': 0.20
-            }
-            
-            final_prediction = sum(pred * weights[method] for method, pred in predictions.items())
-            
-            # Calculate confidence based on indicator agreement
-            predictions_list = list(predictions.values())
-            confidence = 1 - np.std(predictions_list) / (max(abs(min(predictions_list)), abs(max(predictions_list))) + 1e-6)
-            
-            # Calculate technical score
-            tech_score = self.calculate_technical_score(hist, signals)
+            support_resistance = self.calculate_support_resistance(hist)
+            technical_score = self.calculate_technical_score(signals, trend)
             
             return {
                 'signals': signals,
-                'support_resistance': levels,
                 'trend': trend,
-                'patterns': patterns,
-                'predictions': {
-                    'individual': predictions,
-                    'final': {
-                        'direction': 'bullish' if final_prediction > 0 else 'bearish',
-                        'predicted_change_percent': float(final_prediction),
-                        'confidence': float(confidence)
-                    }
-                },
-                'market_condition': {
-                    'volatility': float(volatility),
-                    'trend_strength': trend['strength']
-                },
-                'technical_score': tech_score
+                'support_resistance': support_resistance,
+                'technical_score': technical_score,
+                'predictions': self.make_predictions(hist, signals, trend)
             }
             
         except Exception as e:
-            logger.error(f"Error analyzing {ticker}: {str(e)}")
-            return {'error': str(e)}
+            logger.error(f"Error analyzing {ticker}: {e}")
+            return self.get_empty_analysis()
 
     def setup_indicators(self):
         """

@@ -117,6 +117,7 @@ class AnalysisService:
                     
                     # Log analysis results
                     logger.info(f"{ticker} Analysis Results:")
+                    logger.info(f"Current Price: ${tech_analysis['signals'].get('current_price', 'N/A')}")
                     logger.info(f"Technical Score: {tech_analysis['technical_score']['total_score']}")
                     logger.info(f"News Score: {news_analysis['news_score']}")
                     
@@ -137,7 +138,7 @@ class AnalysisService:
                             logger.info(f"✅ {ticker} meets position criteria, creating position")
                             position_data = {
                                 "ticker": ticker,
-                                "entry_price": tech_analysis['signals']['current_price'],
+                                "entry_price": float(tech_analysis['signals'].get('current_price', 0)),
                                 "timeframe": "medium",
                                 "technical_score": tech_analysis['technical_score']['total_score'],
                                 "news_score": news_analysis['news_score'],
@@ -236,7 +237,7 @@ class AnalysisService:
             # Prepare position data for API
             position_data = {
                 'ticker': ticker,
-                'entry_price': current_price,
+                'entry_price': float(tech_analysis['signals'].get('current_price', 0)),
                 'current_price': current_price,
                 'entry_date': datetime.now().isoformat(),
                 'fundamental_score': score * 0.4,  # 40% of combined score

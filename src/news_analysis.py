@@ -199,28 +199,70 @@ class NewsAnalyzer:
             }
 
     def analyze_stock_news(self, ticker: str) -> Dict:
-        """Complete news analysis for a stock"""
+        """Analyze news sentiment for a stock"""
         try:
-            # Get and analyze news articles
-            articles = self.get_stock_news(ticker)
+            logger.info(f"Starting news analysis for {ticker}")
+            news_items = self.get_stock_news(ticker)
+            logger.info(f"Found {len(news_items)} news items for {ticker}")
             
-            # Calculate overall news score
-            news_analysis = self.calculate_news_score(articles)
+            if not news_items:
+                logger.warning(f"No news found for {ticker}")
+                return {'news_score': 50, 'sentiment_details': {}}
+            
+            total_score = 0
+            news_details = []
+            
+            for idx, news in enumerate(news_items, 1):
+                # Analyze each news item
+                sentiment = self.analyze_article_sentiment(news['title'] + ' ' + news['link'])['sentiment_score']
+                relevance = self.calculate_relevance(news, ticker)
+                recency = self.calculate_recency(news['date'])
+                
+                # Calculate weighted score for this news item
+                item_score = sentiment * relevance * recency
+                
+                news_details.append({
+                    'title': news['title'],
+                    'date': news['date'],
+                    'sentiment': sentiment,
+                    'relevance': relevance,
+                    'recency': recency,
+                    'final_score': item_score
+                })
+                
+                logger.info(f"News {idx}/{len(news_items)}:")
+                logger.info(f"Title: {news['title']}")
+                logger.info(f"Date: {news['date']}")
+                logger.info(f"Sentiment: {sentiment:.2f}")
+                logger.info(f"Relevance: {relevance:.2f}")
+                logger.info(f"Recency: {recency:.2f}")
+                logger.info(f"Item Score: {item_score:.2f}")
+                
+                total_score += item_score
+            
+            # Calculate final score (0-100)
+            final_score = (total_score / len(news_items)) * 100
+            final_score = max(0, min(100, final_score))  # Ensure between 0-100
+            
+            logger.info(f"\nFinal News Analysis for {ticker}:")
+            logger.info(f"Total news items processed: {len(news_items)}")
+            logger.info(f"Average sentiment score: {final_score:.2f}")
+            logger.info("Top scoring news items:")
+            
+            # Sort and log top news items
+            sorted_news = sorted(news_details, key=lambda x: x['final_score'], reverse=True)
+            for idx, news in enumerate(sorted_news[:3], 1):
+                logger.info(f"{idx}. Score: {news['final_score']:.2f} - {news['title']}")
             
             return {
-                'ticker': ticker,
-                'news_score': news_analysis['news_score'],
-                'confidence': news_analysis['confidence'],
-                'article_count': news_analysis['article_count'],
-                'sentiment_details': news_analysis,
-                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                'news_score': final_score,
+                'sentiment_details': {
+                    'total_news': len(news_items),
+                    'news_items': news_details,
+                    'top_news': sorted_news[:3]
+                }
             }
             
         except Exception as e:
             logger.error(f"Error analyzing news for {ticker}: {e}")
-            return {
-                'ticker': ticker,
-                'news_score': 50,
-                'confidence': 'error',
-                'error': str(e)
-            } 
+            return {'news_score': 50, 'sentiment_details': {}} 

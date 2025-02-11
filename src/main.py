@@ -241,6 +241,7 @@ async def main():
             f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
             f"Region: FRA\n"
             f"Analysis Interval: {service.analysis_interval} seconds\n"
+            f"Fundamental Analysis Interval: {FUNDAMENTAL_ANALYSIS_INTERVAL/3600:.1f} hours\n"
             f"Portfolio Threshold: {service.portfolio_threshold}\n"
             "Status: Ready to analyze stocks 📊"
         )
@@ -249,6 +250,8 @@ async def main():
         # Run initial fundamental analysis to create watchlist
         logger.info("Running initial fundamental analysis...")
         await service.run_fundamental_analysis()
+        service.last_fundamental_run = datetime.now()
+        logger.info(f"Initial fundamental analysis completed at {service.last_fundamental_run}")
         
         # Start the analysis loop
         while True:
@@ -258,14 +261,17 @@ async def main():
                 # Run technical and news analysis
                 await service.analyze_watchlist()
                 
-                # Run fundamental analysis daily
-                if (service.last_fundamental_run is None or 
-                    (current_time - service.last_fundamental_run).total_seconds() >= FUNDAMENTAL_ANALYSIS_INTERVAL):
+                # Check if fundamental analysis is due
+                time_since_last = (current_time - service.last_fundamental_run).total_seconds()
+                logger.info(f"Time since last fundamental analysis: {time_since_last/3600:.1f} hours")
+                
+                if time_since_last >= FUNDAMENTAL_ANALYSIS_INTERVAL:
                     logger.info("Running scheduled fundamental analysis...")
                     await service.run_fundamental_analysis()
                     service.last_fundamental_run = current_time
+                    logger.info(f"Fundamental analysis completed at {current_time}")
                 else:
-                    remaining_time = FUNDAMENTAL_ANALYSIS_INTERVAL - (current_time - service.last_fundamental_run).total_seconds()
+                    remaining_time = FUNDAMENTAL_ANALYSIS_INTERVAL - time_since_last
                     logger.info(f"Next fundamental analysis in {remaining_time/3600:.1f} hours")
                 
                 # Sleep until next interval
@@ -273,7 +279,7 @@ async def main():
                 
             except Exception as e:
                 logger.error(f"Error in analysis loop: {e}")
-                await asyncio.sleep(60)  # Wait a minute before retrying
+                await asyncio.sleep(60)
         
     except Exception as e:
         logger.error(f"Service error: {e}")
