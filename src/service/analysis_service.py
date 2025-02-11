@@ -93,17 +93,29 @@ class AnalysisService:
             # Get stocks pending technical analysis
             async with aiohttp.ClientSession() as session:
                 async with session.get(f'{PORTFOLIO_API_URL}/watchlist/pending/technical') as response:
-                    watchlist = await response.json()
+                    if response.status != 200:
+                        logger.error(f"Failed to get watchlist: {response.status}")
+                        return
+                    try:
+                        watchlist = await response.json()
+                    except Exception as e:
+                        text = await response.text()
+                        logger.error(f"Failed to parse watchlist response: {text}")
+                        return
             
+            if not watchlist:
+                logger.info("No stocks pending analysis")
+                return
+
             for ticker in watchlist:
                 try:
                     # Run analyses
                     tech_analysis = self.tech_analyzer.analyze_stock(ticker)
                     news_analysis = self.news_analyzer.analyze_stock_news(ticker)
                     
-                    # Update watchlist with scores
                     async with aiohttp.ClientSession() as session:
-                        await session.patch(
+                        # Update watchlist with scores
+                        update_response = await session.patch(
                             f'{PORTFOLIO_API_URL}/watchlist/{ticker}',
                             json={
                                 'technical_score': tech_analysis['technical_score']['total_score'],
@@ -111,37 +123,42 @@ class AnalysisService:
                                 'notes': f"Last analyzed: {datetime.now().isoformat()}"
                             }
                         )
+                        if update_response.status != 200:
+                            logger.error(f"Failed to update watchlist for {ticker}: {update_response.status}")
+                            continue
 
-                    # Create position if meets criteria
-                    if self.should_create_position(tech_analysis, news_analysis):
-                        position_data = {
-                            "ticker": ticker,
-                            "entry_price": tech_analysis['signals']['current_price'],
-                            "timeframe": "medium",
-                            "technical_score": tech_analysis['technical_score']['total_score'],
-                            "news_score": news_analysis['news_score'],
-                            "support_levels": tech_analysis['support_resistance']['support']['levels'][:3],
-                            "resistance_levels": tech_analysis['support_resistance']['resistance']['levels'][:3],
-                            "trend": {
-                                "direction": tech_analysis['trend']['trend'],
-                                "strength": tech_analysis['trend']['strength'],
-                                "ma_alignment": tech_analysis['signals']['moving_averages']['ma_aligned']
-                            },
-                            "signals": {
-                                "rsi": tech_analysis['signals']['momentum']['rsi'],
-                                "macd": {
-                                    "value": tech_analysis['signals']['trend']['macd'],
-                                    "signal": tech_analysis['signals']['trend']['macd_trend']
+                        # Create position if meets criteria
+                        if self.should_create_position(tech_analysis, news_analysis):
+                            position_data = {
+                                "ticker": ticker,
+                                "entry_price": tech_analysis['signals']['current_price'],
+                                "timeframe": "medium",
+                                "technical_score": tech_analysis['technical_score']['total_score'],
+                                "news_score": news_analysis['news_score'],
+                                "support_levels": tech_analysis['support_resistance']['support']['levels'][:3],
+                                "resistance_levels": tech_analysis['support_resistance']['resistance']['levels'][:3],
+                                "trend": {
+                                    "direction": tech_analysis['trend']['trend'],
+                                    "strength": tech_analysis['trend']['strength'],
+                                    "ma_alignment": tech_analysis['signals']['moving_averages']['ma_aligned']
                                 },
-                                "volume_profile": tech_analysis['signals']['volume']['profile'],
-                                "predicted_move": tech_analysis['predictions']['final']['predicted_change_percent']
+                                "signals": {
+                                    "rsi": tech_analysis['signals']['momentum']['rsi'],
+                                    "macd": {
+                                        "value": tech_analysis['signals']['trend']['macd'],
+                                        "signal": tech_analysis['signals']['trend']['macd_trend']
+                                    },
+                                    "volume_profile": tech_analysis['signals']['volume']['profile'],
+                                    "predicted_move": tech_analysis['predictions']['final']['predicted_change_percent']
+                                }
                             }
-                        }
-                        
-                        await session.post(
-                            f'{PORTFOLIO_API_URL}/positions',
-                            json=position_data
-                        )
+                            
+                            position_response = await session.post(
+                                f'{PORTFOLIO_API_URL}/positions',
+                                json=position_data
+                            )
+                            if position_response.status != 200:
+                                logger.error(f"Failed to create position for {ticker}: {position_response.status}")
                     
                 except Exception as e:
                     logger.error(f"Error analyzing {ticker}: {e}")
