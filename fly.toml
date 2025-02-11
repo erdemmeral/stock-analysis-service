@@ -1,23 +1,17 @@
 # fly.toml app configuration file
 app = "stock-analysis-service"
-primary_region = "fra"
+primary_region = 'fra'
 
 [build]
-  dockerfile = "Dockerfile"
+  dockerfile = 'Dockerfile'
 
 [env]
-  ANALYSIS_INTERVAL = "3600"  # 1 hour in seconds
-  PORTFOLIO_THRESHOLD_SCORE = "75"
-  PYTHONUNBUFFERED = "1"
+  PYTHONUNBUFFERED = '1'
 
-# Configure as a worker process
 [processes]
-  worker = {
-    cmd = "python -m src.main",
-    memory = "2gb",
-    cpu_kind = "shared",
-    cpus = 4
-  }
+  app = 'python -m src.main'
 
-[logging]
-  level = "debug" 
+[[vm]]
+  memory = '2gb'
+  cpu_kind = 'shared'
+  cpus = 4
