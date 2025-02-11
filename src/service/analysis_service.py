@@ -69,11 +69,16 @@ class AnalysisService:
             logger.info("Running fundamental analysis...")
             fund_results, raw_data = self.fund_analyzer.analyze_stocks()
             
-            # Update watchlist in database
-            await self.db.update_watchlist(fund_results)
-            
-            # Store raw fundamental data
-            await self.db.store_fundamental_data(raw_data)
+            # Add stocks to watchlist with fundamental scores
+            async with aiohttp.ClientSession() as session:
+                for stock in fund_results:
+                    await session.post(
+                        f'{PORTFOLIO_API_URL}/watchlist',
+                        json={
+                            'ticker': stock['ticker'],
+                            'fundamental_score': stock['score']
+                        }
+                    )
             
             logger.info(f"Updated watchlist with {len(fund_results)} stocks")
             return fund_results
@@ -85,53 +90,58 @@ class AnalysisService:
     async def analyze_watchlist(self):
         """Run technical and news analysis on watchlist stocks"""
         try:
-            # Get current watchlist
-            watchlist = await self.db.get_watchlist()
+            # Get stocks pending technical analysis
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'{PORTFOLIO_API_URL}/watchlist/pending/technical') as response:
+                    watchlist = await response.json()
             
             for ticker in watchlist:
                 try:
-                    # Get fundamental score from database
-                    fund_score = await self.db.get_fundamental_score(ticker)
-                    
-                    # Run technical analysis
+                    # Run analyses
                     tech_analysis = self.tech_analyzer.analyze_stock(ticker)
-                    tech_score = tech_analysis['technical_score']['total_score']
-                    
-                    # Run news analysis
                     news_analysis = self.news_analyzer.analyze_stock_news(ticker)
-                    news_score = news_analysis['news_score']
                     
-                    # Calculate combined score
-                    combined_score = self.calculate_combined_score(
-                        fund_score, tech_score, news_score
-                    )
-                    
-                    # Check if stock should be in portfolio
-                    if combined_score >= self.portfolio_threshold:
-                        if not await self.db.is_in_portfolio(ticker):
-                            await self.handle_portfolio_addition(
-                                ticker, 
-                                combined_score,
-                                tech_analysis,
-                                news_analysis
-                            )
-                    else:
-                        if await self.db.is_in_portfolio(ticker):
-                            await self.handle_portfolio_removal(
-                                ticker,
-                                combined_score,
-                                tech_analysis,
-                                news_analysis
-                            )
-                    
-                    # Store analysis results
-                    await self.store_analysis(
-                        ticker,
-                        fund_score,
-                        tech_analysis,
-                        news_analysis,
-                        combined_score
-                    )
+                    # Update watchlist with scores
+                    async with aiohttp.ClientSession() as session:
+                        await session.patch(
+                            f'{PORTFOLIO_API_URL}/watchlist/{ticker}',
+                            json={
+                                'technical_score': tech_analysis['technical_score']['total_score'],
+                                'news_score': news_analysis['news_score'],
+                                'notes': f"Last analyzed: {datetime.now().isoformat()}"
+                            }
+                        )
+
+                    # Create position if meets criteria
+                    if self.should_create_position(tech_analysis, news_analysis):
+                        position_data = {
+                            "ticker": ticker,
+                            "entry_price": tech_analysis['signals']['current_price'],
+                            "timeframe": "medium",
+                            "technical_score": tech_analysis['technical_score']['total_score'],
+                            "news_score": news_analysis['news_score'],
+                            "support_levels": tech_analysis['support_resistance']['support']['levels'][:3],
+                            "resistance_levels": tech_analysis['support_resistance']['resistance']['levels'][:3],
+                            "trend": {
+                                "direction": tech_analysis['trend']['trend'],
+                                "strength": tech_analysis['trend']['strength'],
+                                "ma_alignment": tech_analysis['signals']['moving_averages']['ma_aligned']
+                            },
+                            "signals": {
+                                "rsi": tech_analysis['signals']['momentum']['rsi'],
+                                "macd": {
+                                    "value": tech_analysis['signals']['trend']['macd'],
+                                    "signal": tech_analysis['signals']['trend']['macd_trend']
+                                },
+                                "volume_profile": tech_analysis['signals']['volume']['profile'],
+                                "predicted_move": tech_analysis['predictions']['final']['predicted_change_percent']
+                            }
+                        }
+                        
+                        await session.post(
+                            f'{PORTFOLIO_API_URL}/positions',
+                            json=position_data
+                        )
                     
                 except Exception as e:
                     logger.error(f"Error analyzing {ticker}: {e}")
@@ -395,11 +405,11 @@ class AnalysisService:
             
             await self.send_telegram_alert(message)
             
-            # Update position status via API
+            # Update position status to closed
             async with aiohttp.ClientSession() as session:
-                await session.put(
-                    f'{PORTFOLIO_API_URL}/positions/{ticker}/close',
-                    json=position_data
+                await session.patch(
+                    f'{PORTFOLIO_API_URL}/positions/{ticker}',
+                    json={'status': 'closed'}
                 )
             
         except Exception as e:
@@ -418,4 +428,37 @@ class AnalysisService:
             position_data['trend']['strength'] > 70):
             return "Strong Bearish Technical Signals"
         
-        return "Multiple Technical Indicators" 
+        return "Multiple Technical Indicators"
+
+    def should_create_position(self, tech_analysis: Dict, news_analysis: Dict) -> bool:
+        """Determine if we should create a position based on multiple criteria"""
+        try:
+            # 1. Technical Score Check
+            tech_score = tech_analysis['technical_score']['total_score']
+            if tech_score < self.portfolio_threshold:
+                return False
+
+            # 2. Trend Check
+            trend = tech_analysis['trend']
+            if trend['direction'] != 'bullish' or trend['strength'] < 60:
+                return False
+
+            # 3. MACD Signal Check
+            macd_signal = tech_analysis['signals']['trend']['macd_trend']
+            if macd_signal != 'buy':
+                return False
+
+            # 4. RSI Check (not overbought)
+            rsi = tech_analysis['signals']['momentum']['rsi']
+            if rsi > 70:  # Overbought
+                return False
+
+            # 5. News Sentiment Check
+            if news_analysis['news_score'] < 50:  # Negative sentiment
+                return False
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error checking position criteria: {e}")
+            return False 
