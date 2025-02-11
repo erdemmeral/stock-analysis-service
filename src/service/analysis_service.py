@@ -1,20 +1,19 @@
 import logging
 from typing import Dict, List
 import telegram
-from datetime import datetime, timedelta
+from datetime import datetime
 import asyncio
+import aiohttp
 from ..technical_analysis import TechnicalAnalyzer
 from ..fundamental_analysis import FundamentalAnalyzer
 from ..news_analysis import NewsAnalyzer
-from ..database import Database  # Your backend database connection
 from ..config import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHANNEL_ID,
-    TECHNICAL_ANALYSIS_INTERVAL,  # e.g. 3600 (1 hour)
-    FUNDAMENTAL_ANALYSIS_INTERVAL,  # 86400 (24 hours)
-    PORTFOLIO_THRESHOLD_SCORE
+    TECHNICAL_ANALYSIS_INTERVAL,
+    PORTFOLIO_THRESHOLD_SCORE,
+    PORTFOLIO_API_URL
 )
-import aiohttp
 
 logger = logging.getLogger(__name__)
 
@@ -24,13 +23,34 @@ class AnalysisService:
         self.fund_analyzer = FundamentalAnalyzer()
         self.news_analyzer = NewsAnalyzer()
         self.bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
-        self.db = Database()  # Your backend database connection
         self.last_fundamental_run = None
         
         # Add configuration properties
         self.analysis_interval = TECHNICAL_ANALYSIS_INTERVAL
         self.portfolio_threshold = PORTFOLIO_THRESHOLD_SCORE
-        
+
+    async def get_watchlist(self):
+        """Get watchlist from API"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'{PORTFOLIO_API_URL}/watchlist') as response:
+                    if response.status == 200:
+                        return await response.json()
+                    return []
+        except Exception as e:
+            logger.error(f"Error getting watchlist: {e}")
+            return []
+
+    async def is_in_portfolio(self, ticker: str) -> bool:
+        """Check if stock is in portfolio via API"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'{PORTFOLIO_API_URL}/positions/{ticker}') as response:
+                    return response.status == 200
+        except Exception as e:
+            logger.error(f"Error checking portfolio: {e}")
+            return False
+
     async def send_telegram_alert(self, message: str):
         """Send alert to Telegram channel"""
         try:
@@ -382,5 +402,4 @@ class AnalysisService:
 
     def get_exit_reason(self, position_data: Dict) -> str:
         # Implement the logic to determine the exit reason based on position_data
-        # This is a placeholder and should be replaced with the actual implementation
-        return "No specific reason provided" 
+        # This is a placeholder and should be replaced with the actual implementation 

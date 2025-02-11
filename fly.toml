@@ -7,6 +7,10 @@ primary_region = 'fra'
 
 [env]
   PYTHONUNBUFFERED = '1'
+  TELEGRAM_BOT_TOKEN = '7530096691:AAEbEnXA2PJyihv0S3HD_5q1_pq6QRSj7-g'
+  TELEGRAM_CHANNEL_ID = '-4678926083'
+  ANALYSIS_INTERVAL = '3600'
+  PORTFOLIO_THRESHOLD_SCORE = '75'
 
 [processes]
   app = 'python -m src.main'
