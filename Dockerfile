@@ -18,6 +18,7 @@ COPY . .
 # Set environment variables
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONPATH=/app
+ENV PYTHONDEVMODE=1  # Enable asyncio debug mode
 
 # Run the application (can be overridden with --test)
 CMD ["python", "-m", "src.main"] 
