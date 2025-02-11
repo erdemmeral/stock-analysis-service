@@ -9,6 +9,14 @@ from .news_analysis import NewsAnalyzer
 from .service.analysis_service import AnalysisService
 import signal
 import sys
+from ..config import (
+    TELEGRAM_BOT_TOKEN,
+    TELEGRAM_CHANNEL_ID,
+    TECHNICAL_ANALYSIS_INTERVAL,
+    FUNDAMENTAL_ANALYSIS_INTERVAL,
+    PORTFOLIO_THRESHOLD_SCORE,
+    PORTFOLIO_API_URL
+)
 
 # Configure logging
 logging.basicConfig(
