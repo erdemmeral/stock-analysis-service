@@ -4,6 +4,7 @@ import pandas as pd
 from tqdm import tqdm
 import time
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -340,11 +341,16 @@ class FundamentalAnalyzer:
     def analyze_stocks(self):
         """Analyze stocks from stock_tickers.txt"""
         try:
+            # Check if file exists
+            if not os.path.exists('stock_tickers.txt'):
+                logger.error("stock_tickers.txt not found!")
+                return [], []
+
             # Read tickers from file
             with open('stock_tickers.txt', 'r') as f:
-                tickers = [line.strip() for line in f if line.strip()]
+                tickers = [line.strip() for line in f if line.strip() and not line.startswith('#')]
             
-            logger.info(f"Starting fundamental analysis of {len(tickers)} stocks")
+            logger.info(f"Found {len(tickers)} tickers in stock_tickers.txt")
             
             results = []
             raw_data = []

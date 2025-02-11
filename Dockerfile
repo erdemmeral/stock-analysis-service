@@ -15,7 +15,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy only necessary files
 COPY src/ ./src/
-COPY stock_tickers.txt .
+COPY stock_tickers.txt ./stock_tickers.txt
 
 # Configure environment
 ENV PYTHONUNBUFFERED=1
