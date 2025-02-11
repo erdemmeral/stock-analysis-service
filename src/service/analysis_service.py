@@ -11,6 +11,7 @@ from ..config import (
     TELEGRAM_BOT_TOKEN,
     TELEGRAM_CHANNEL_ID,
     TECHNICAL_ANALYSIS_INTERVAL,
+    FUNDAMENTAL_ANALYSIS_INTERVAL,
     PORTFOLIO_THRESHOLD_SCORE,
     PORTFOLIO_API_URL
 )
@@ -394,12 +395,27 @@ class AnalysisService:
             
             await self.send_telegram_alert(message)
             
-            # Update position status
-            await self.db.close_position(ticker, position_data)
+            # Update position status via API
+            async with aiohttp.ClientSession() as session:
+                await session.put(
+                    f'{PORTFOLIO_API_URL}/positions/{ticker}/close',
+                    json=position_data
+                )
             
         except Exception as e:
             logger.error(f"Error handling position exit for {ticker}: {e}")
 
     def get_exit_reason(self, position_data: Dict) -> str:
-        # Implement the logic to determine the exit reason based on position_data
-        # This is a placeholder and should be replaced with the actual implementation 
+        """Determine the reason for position exit"""
+        if position_data['current_price'] <= position_data.get('stop_loss', 0):
+            return "Stop Loss Hit"
+        
+        if position_data['current_price'] >= position_data.get('take_profit', float('inf')):
+            return "Take Profit Hit"
+        
+        if (position_data['trend']['direction'] == 'strong_bearish' and 
+            position_data['signals']['macd']['signal'] == 'sell' and
+            position_data['trend']['strength'] > 70):
+            return "Strong Bearish Technical Signals"
+        
+        return "Multiple Technical Indicators" 
