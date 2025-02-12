@@ -10,24 +10,66 @@ logger = logging.getLogger(__name__)
 
 class FundamentalAnalyzer:
     def __init__(self):
-        # Basic screening metrics with minimum and maximum thresholds
+        # Basic screening metrics with minimum and ideal thresholds
         self.fundamental_metrics = {
-            'debt_to_equity': {'min': 0, 'max': 1.0, 'weight': 1.0},
-            'eps_growth_5y': {'min': 0, 'required_min': -10, 'weight': 1.0},  # Allow some negative growth but penalize
-            'gross_margin': {'min': 30, 'required_min': 20, 'weight': 1.0},   # Minimum 20% required
-            'net_margin': {'min': 15, 'required_min': 10, 'weight': 1.0},     # Minimum 10% required
-            'operating_margin': {'min': 0, 'required_min': -5, 'weight': 1.0}, # Allow slight negative
-            'pe_ratio': {'min': 0, 'max': 50, 'weight': 1.0},                 # Add maximum PE
-            'country': {'value': 'USA', 'weight': 1.0}
+            'debt_to_equity': {
+                'required_max': 1.5,  # Maximum allowed
+                'max': 1.0,          # Ideal maximum
+                'weight': 1.0
+            },
+            'eps_growth_5y': {
+                'required_min': -10,  # Minimum allowed
+                'min': 0,            # Ideal minimum
+                'weight': 1.0
+            },
+            'gross_margin': {
+                'required_min': 20,   # Minimum allowed
+                'min': 30,           # Ideal minimum
+                'weight': 1.0
+            },
+            'net_margin': {
+                'required_min': 5,    # Minimum allowed
+                'min': 15,           # Ideal minimum
+                'weight': 1.0
+            },
+            'operating_margin': {
+                'required_min': -5,   # Minimum allowed
+                'min': 0,            # Ideal minimum
+                'weight': 1.0
+            },
+            'country': {
+                'value': 'USA',
+                'weight': 1.0
+            }
         }
         
-        # Buffett criteria with minimum and maximum thresholds
+        # Buffett criteria with required and ideal thresholds
         self.buffett_metrics = {
-            'sga_to_gross_profit': {'max': 0.30, 'required_max': 0.40, 'weight': 1.0},  # Max 40% required
-            'depreciation_to_gross_profit': {'max': 0.10, 'required_max': 0.15, 'weight': 1.0},  # Max 15% required
-            'interest_to_operating_income': {'max': 0.15, 'required_max': 0.20, 'weight': 1.0},  # Max 20% required
-            'debt_coverage': {'min': 4.0, 'required_min': 3.0, 'weight': 1.0},  # Minimum 3x coverage required
-            'leverage_ratio': {'max': 1.0, 'required_max': 1.2, 'weight': 1.0}   # Max 1.2x leverage required
+            'sga_to_gross_profit': {
+                'required_max': 0.40,  # Maximum allowed
+                'max': 0.30,          # Ideal maximum
+                'weight': 1.0
+            },
+            'depreciation_to_gross_profit': {
+                'required_max': 0.15,  # Maximum allowed
+                'max': 0.10,          # Ideal maximum
+                'weight': 1.0
+            },
+            'interest_to_operating_income': {
+                'required_max': 0.20,  # Maximum allowed
+                'max': 0.15,          # Ideal maximum
+                'weight': 1.0
+            },
+            'debt_coverage': {
+                'required_min': 3.0,   # Minimum allowed
+                'min': 4.0,           # Ideal minimum
+                'weight': 1.0
+            },
+            'leverage_ratio': {
+                'required_max': 1.2,   # Maximum allowed
+                'max': 1.0,           # Ideal maximum
+                'weight': 1.0
+            }
         }
     
     def get_fundamental_data(self, ticker: str) -> Dict:
@@ -167,92 +209,79 @@ class FundamentalAnalyzer:
         
         return data
     
-    def score_fundamentals(self, fundamental_data: Dict) -> float:
-        """
-        Scores the stock based on both fundamental and Buffett metrics
-        Returns a score between 0 and 100, or 0 if minimum criteria not met
-        """
-        if fundamental_data is None:
-            return 0
-        
-        # First check minimum requirements
-        if (fundamental_data.get('debt_to_equity', float('inf')) > 1.0 or
-            fundamental_data.get('eps_growth_5y', float('-inf')) < 0 or
-            fundamental_data.get('gross_margin', 0) < 30 or
-            fundamental_data.get('net_margin', 0) < 15 or
-            fundamental_data.get('operating_margin', float('-inf')) < 0):
-            return 0
-        
-        score = 0
-        total_weight = 0
-        
-        # Score basic screening metrics
-        for metric, criteria in self.fundamental_metrics.items():
-            if metric == 'country':
-                if fundamental_data[metric] == criteria['value']:
-                    score += criteria['weight']
-                total_weight += criteria['weight']
-                continue
-                
-            value = fundamental_data[metric]
-            weight = criteria['weight']
-            total_weight += weight
+    def score_fundamentals(self, data: Dict) -> float:
+        """Calculate fundamental score with more nuanced criteria"""
+        try:
+            scores = []
+            weights = []
             
-            # Skip scoring if value is invalid
-            if value is None or value in [float('inf'), float('-inf')] or pd.isna(value):
-                continue
-            
-            if 'max' in criteria and 'min' in criteria:
-                # For metrics with both min and max
-                if value >= criteria['min'] and value <= criteria['max']:
-                    score += weight
-                elif value < criteria['min'] and criteria['min'] != 0:
-                    score += weight * (value / criteria['min'])
-                elif value > criteria['max']:
-                    score += weight * (criteria['max'] / value)
-            elif 'min' in criteria:
-                # For metrics with only minimum
-                if criteria['min'] == 0:
-                    score += weight if value >= 0 else 0
-                else:
-                    if value >= criteria['min']:
-                        score += weight
-                    else:
-                        score += weight * (value / criteria['min'])
-            elif 'max' in criteria:
-                # For metrics with only maximum
-                if value <= criteria['max']:
-                    score += weight
-                else:
-                    score += weight * (criteria['max'] / value)
-        
-        # Score Buffett metrics if available
-        if 'sga_to_gross_profit' in fundamental_data:
-            for metric, criteria in self.buffett_metrics.items():
-                value = fundamental_data[metric]
-                weight = criteria['weight']
-                total_weight += weight
-                
-                # Skip scoring if value is invalid
-                if value is None or value in [float('inf'), float('-inf')] or pd.isna(value):
+            # Score each fundamental metric
+            for metric, criteria in self.fundamental_metrics.items():
+                if metric == 'country':  # Skip non-numeric criteria
+                    continue
+                    
+                value = data.get(metric)
+                if value is None:
                     continue
                 
-                if 'min' in criteria:
-                    if criteria['min'] == 0:
-                        score += weight if value >= 0 else 0
+                # Get thresholds
+                min_val = criteria.get('required_min', criteria.get('min', float('-inf')))
+                max_val = criteria.get('required_max', criteria.get('max', float('inf')))
+                target_min = criteria.get('min', min_val)
+                target_max = criteria.get('max', max_val)
+                weight = criteria['weight']
+                
+                # Calculate score
+                if value < min_val or value > max_val:
+                    score = 0  # Fails required threshold
+                elif target_min <= value <= target_max:
+                    score = 100  # Meets ideal criteria
+                else:
+                    # Scale score based on how close to ideal range
+                    if value < target_min:
+                        score = 50 + (50 * (value - min_val) / (target_min - min_val))
+                    else:  # value > target_max
+                        score = 50 + (50 * (max_val - value) / (max_val - target_max))
+                
+                scores.append(score * weight)
+                weights.append(weight)
+            
+            # Score Buffett criteria
+            for metric, criteria in self.buffett_metrics.items():
+                value = data.get(metric)
+                if value is None:
+                    continue
+                    
+                min_val = criteria.get('required_min', criteria.get('min', float('-inf')))
+                max_val = criteria.get('required_max', criteria.get('max', float('inf')))
+                target_min = criteria.get('min', min_val)
+                target_max = criteria.get('max', max_val)
+                weight = criteria['weight']
+                
+                # Calculate score
+                if value < min_val or value > max_val:
+                    score = 0
+                elif target_min <= value <= target_max:
+                    score = 100
+                else:
+                    if value < target_min:
+                        score = 50 + (50 * (value - min_val) / (target_min - min_val))
                     else:
-                        if value >= criteria['min']:
-                            score += weight
-                        else:
-                            score += weight * (value / criteria['min'])
-                elif 'max' in criteria:
-                    if value <= criteria['max']:
-                        score += weight
-                    else:
-                        score += weight * (criteria['max'] / value)
-        
-        # Convert score to percentage
-        return (score / total_weight) * 100 if total_weight > 0 else 0
+                        score = 50 + (50 * (max_val - value) / (max_val - target_max))
+                
+                scores.append(score * weight)
+                weights.append(weight)
+            
+            # Calculate weighted average score
+            if not scores:
+                return 0
+            
+            final_score = sum(scores) / sum(weights)
+            return max(0, min(100, final_score))
+            
+        except Exception as e:
+            logger.error(f"Error calculating fundamental score: {e}")
+            return 0
 
     def meets_minimum_criteria(self, data: Dict) -> bool:
         """
@@ -282,37 +311,45 @@ class FundamentalAnalyzer:
         
         return True
     
-    def meets_all_criteria(self, ticker: str) -> bool:
-        """
-        Returns True if stock meets all fundamental and Buffett criteria
-        """
-        data = self.get_fundamental_data(ticker)
-        if data is None:
+    def meets_all_criteria(self, data: Dict) -> bool:
+        """Check if stock meets minimum required criteria"""
+        try:
+            # Check fundamental metrics
+            for metric, criteria in self.fundamental_metrics.items():
+                if metric == 'country':
+                    if data.get(metric) != criteria['value']:
+                        return False
+                    continue
+                    
+                value = data.get(metric)
+                if value is None:
+                    continue
+                    
+                min_val = criteria.get('required_min', float('-inf'))
+                max_val = criteria.get('required_max', float('inf'))
+                
+                if value < min_val or value > max_val:
+                    logger.info(f"Failed {metric}: {value} not in range [{min_val}, {max_val}]")
+                    return False
+            
+            # Check Buffett criteria
+            for metric, criteria in self.buffett_metrics.items():
+                value = data.get(metric)
+                if value is None:
+                    continue
+                    
+                min_val = criteria.get('required_min', float('-inf'))
+                max_val = criteria.get('required_max', float('inf'))
+                
+                if value < min_val or value > max_val:
+                    logger.info(f"Failed Buffett metric {metric}: {value} not in range [{min_val}, {max_val}]")
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error checking criteria: {e}")
             return False
-            
-        # Check basic screening criteria
-        basic_criteria = (
-            data['debt_to_equity'] <= self.fundamental_metrics['debt_to_equity']['max'] and
-            data['eps_growth_5y'] >= self.fundamental_metrics['eps_growth_5y']['min'] and
-            data['gross_margin'] >= self.fundamental_metrics['gross_margin']['min'] and
-            data['net_margin'] >= self.fundamental_metrics['net_margin']['min'] and
-            data['operating_margin'] >= self.fundamental_metrics['operating_margin']['min'] and
-            data['pe_ratio'] >= self.fundamental_metrics['pe_ratio']['min'] and
-            data['country'] == self.fundamental_metrics['country']['value']
-        )
-        
-        # Check Buffett criteria if available
-        if 'sga_to_gross_profit' in data:
-            buffett_criteria = (
-                data['sga_to_gross_profit'] <= self.buffett_metrics['sga_to_gross_profit']['max'] and
-                data['depreciation_to_gross_profit'] <= self.buffett_metrics['depreciation_to_gross_profit']['max'] and
-                data['interest_to_operating_income'] <= self.buffett_metrics['interest_to_operating_income']['max'] and
-                data['debt_coverage'] >= self.buffett_metrics['debt_coverage']['min'] and
-                data['leverage_ratio'] <= self.buffett_metrics['leverage_ratio']['max']
-            )
-            return basic_criteria and buffett_criteria
-            
-        return basic_criteria 
 
     def calculate_minimum_score(self):
         """
