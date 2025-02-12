@@ -203,6 +203,9 @@ class AnalysisService:
 
     async def run_analysis_loop(self):
         """Main analysis loop with different intervals"""
+        news_check_counter = 0  # Counter for news checks
+        news_check_interval = 300  # Check news every 5 minutes
+        
         while True:
             try:
                 current_time = datetime.now()
@@ -213,8 +216,43 @@ class AnalysisService:
                     await self.run_fundamental_analysis()
                     self.last_fundamental_run = current_time
                 
-                # Run technical and news analysis on watchlist
+                # Run technical analysis on watchlist every hour
                 await self.analyze_watchlist()
+                
+                # Run news analysis more frequently but not too often
+                news_check_counter += self.analysis_interval
+                if news_check_counter >= news_check_interval:
+                    watchlist = await self.get_watchlist()
+                    for stock in watchlist:
+                        ticker = stock['ticker']
+                        try:
+                            news_analysis = self.news_analyzer.analyze_stock_news(ticker)
+                            
+                            # Update watchlist with news scores
+                            update_data = {
+                                'news_score': news_analysis['news_score'],
+                                'news_sentiment': news_analysis['sentiment'],
+                                'last_news': current_time.isoformat()
+                            }
+                            
+                            await self.update_watchlist_item(ticker, update_data)
+                            
+                            # Check for significant news changes
+                            old_score = float(stock.get('news_score', 50))
+                            score_change = abs(news_analysis['news_score'] - old_score)
+                            
+                            if (score_change > 15 or  # Significant change in sentiment
+                                news_analysis['news_score'] >= 70 or  # Very positive news
+                                news_analysis['news_score'] <= 30):   # Very negative news
+                                
+                                logger.info(f"Significant news change for {ticker} (change: {score_change:.2f})")
+                                await self.check_position_opportunity(ticker, news_analysis)
+                            
+                        except Exception as e:
+                            logger.error(f"Error monitoring news for {ticker}: {e}")
+                            continue
+                    
+                    news_check_counter = 0  # Reset counter
                 
                 # Wait for next technical analysis interval
                 await asyncio.sleep(self.analysis_interval)
