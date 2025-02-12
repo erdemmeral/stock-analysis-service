@@ -190,13 +190,24 @@ class NewsAnalyzer:
             time_weights = np.exp(-np.array(days_diff) / decay_factor)
             time_weights = time_weights / time_weights.sum()  # Normalize weights
             
-            # Get sentiment scores
-            sentiments = [article['sentiment']['sentiment_score'] for article in sorted_articles]
+            # Get sentiment scores and ensure they're in 0-100 range
+            sentiments = []
+            for article in sorted_articles:
+                score = article['sentiment']['sentiment_score']
+                # Clamp sentiment scores to 0-100 range
+                score = max(0, min(100, score))
+                sentiments.append(score)
             
             # Calculate weighted sentiment score
             weighted_sentiments = []
+            total_weighted_score = 0
+            total_weight = 0
+            
             for i, (sentiment, weight) in enumerate(zip(sentiments, time_weights)):
                 weighted_score = sentiment * weight
+                total_weighted_score += weighted_score
+                total_weight += weight
+                
                 weighted_sentiments.append({
                     'date': sorted_articles[i]['date'],
                     'title': sorted_articles[i]['title'],
@@ -205,11 +216,11 @@ class NewsAnalyzer:
                     'weighted_score': float(weighted_score)
                 })
             
-            # Calculate final weighted average
-            weighted_avg = sum(ws['weighted_score'] for ws in weighted_sentiments)
+            # Calculate final weighted average properly
+            news_score = total_weighted_score / total_weight if total_weight > 0 else 50
             
-            # Convert to 0-100 score
-            news_score = (weighted_avg + 1) * 50
+            # Ensure the score is in 0-100 range
+            news_score = max(0, min(100, news_score))
             
             # Calculate confidence based on article count and sentiment consistency
             article_count = len(articles)
@@ -224,6 +235,12 @@ class NewsAnalyzer:
                 'low'
             )
             
+            # Log the calculation details for debugging
+            logger.debug(f"News score calculation details:")
+            logger.debug(f"Total weighted score: {total_weighted_score}")
+            logger.debug(f"Total weight: {total_weight}")
+            logger.debug(f"Final news score: {news_score}")
+            
             return {
                 'news_score': float(news_score),
                 'confidence': confidence,
@@ -234,7 +251,7 @@ class NewsAnalyzer:
                 'recent_articles': [{
                     'date': art['date'],
                     'title': art['title'],
-                    'sentiment': art['sentiment']['sentiment_score'],
+                    'sentiment': max(0, min(100, art['sentiment']['sentiment_score'])),  # Ensure sentiment is bounded
                     'link': art['link']
                 } for art in sorted_articles[:5]]
             }

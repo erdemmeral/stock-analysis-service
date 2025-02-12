@@ -210,8 +210,12 @@ class FundamentalAnalyzer:
         return data
     
     def score_fundamentals(self, data: Dict) -> float:
-        """Calculate fundamental score with more nuanced criteria"""
+        """Calculate fundamental score with more stringent criteria"""
         try:
+            # First check if stock meets minimum criteria
+            if not self.meets_minimum_criteria(data):
+                return 0
+            
             scores = []
             weights = []
             
@@ -222,7 +226,7 @@ class FundamentalAnalyzer:
                     
                 value = data.get(metric)
                 if value is None:
-                    continue
+                    return 0  # Fail if any required metric is missing
                 
                 # Get thresholds
                 min_val = criteria.get('required_min', criteria.get('min', float('-inf')))
@@ -231,17 +235,17 @@ class FundamentalAnalyzer:
                 target_max = criteria.get('max', max_val)
                 weight = criteria['weight']
                 
-                # Calculate score
+                # Calculate score - more stringent scoring
                 if value < min_val or value > max_val:
-                    score = 0  # Fails required threshold
+                    return 0  # Fail immediately if any metric is outside required range
                 elif target_min <= value <= target_max:
                     score = 100  # Meets ideal criteria
                 else:
-                    # Scale score based on how close to ideal range
+                    # Scale score based on how close to ideal range - more stringent scaling
                     if value < target_min:
-                        score = 50 + (50 * (value - min_val) / (target_min - min_val))
+                        score = 60 + (40 * (value - min_val) / (target_min - min_val))
                     else:  # value > target_max
-                        score = 50 + (50 * (max_val - value) / (max_val - target_max))
+                        score = 60 + (40 * (max_val - value) / (max_val - target_max))
                 
                 scores.append(score * weight)
                 weights.append(weight)
@@ -250,7 +254,7 @@ class FundamentalAnalyzer:
             for metric, criteria in self.buffett_metrics.items():
                 value = data.get(metric)
                 if value is None:
-                    continue
+                    return 0  # Fail if any Buffett metric is missing
                     
                 min_val = criteria.get('required_min', criteria.get('min', float('-inf')))
                 max_val = criteria.get('required_max', criteria.get('max', float('inf')))
@@ -258,16 +262,17 @@ class FundamentalAnalyzer:
                 target_max = criteria.get('max', max_val)
                 weight = criteria['weight']
                 
-                # Calculate score
+                # Calculate score - more stringent scoring
                 if value < min_val or value > max_val:
-                    score = 0
+                    return 0  # Fail immediately if any metric is outside required range
                 elif target_min <= value <= target_max:
                     score = 100
                 else:
+                    # Scale score based on how close to ideal range - more stringent scaling
                     if value < target_min:
-                        score = 50 + (50 * (value - min_val) / (target_min - min_val))
+                        score = 60 + (40 * (value - min_val) / (target_min - min_val))
                     else:
-                        score = 50 + (50 * (max_val - value) / (max_val - target_max))
+                        score = 60 + (40 * (max_val - value) / (max_val - target_max))
                 
                 scores.append(score * weight)
                 weights.append(weight)
@@ -277,7 +282,9 @@ class FundamentalAnalyzer:
                 return 0
             
             final_score = sum(scores) / sum(weights)
-            return max(0, min(100, final_score))
+            
+            # Additional threshold - require at least 70% score to pass
+            return final_score if final_score >= 70 else 0
             
         except Exception as e:
             logger.error(f"Error calculating fundamental score: {e}")
@@ -285,32 +292,48 @@ class FundamentalAnalyzer:
 
     def meets_minimum_criteria(self, data: Dict) -> bool:
         """
-        Checks if stock meets minimum required criteria
+        Checks if stock meets minimum required criteria - more stringent version
         """
-        # Check basic screening criteria
-        for metric, criteria in self.fundamental_metrics.items():
-            if metric == 'country':
-                if data[metric] != criteria['value']:
+        try:
+            # Check if we have all required metrics
+            required_metrics = set(self.fundamental_metrics.keys()) | set(self.buffett_metrics.keys())
+            missing_metrics = [metric for metric in required_metrics if metric not in data]
+            if missing_metrics:
+                logger.info(f"Missing required metrics: {missing_metrics}")
+                return False
+            
+            # Check basic screening criteria
+            for metric, criteria in self.fundamental_metrics.items():
+                if metric == 'country':
+                    if data[metric] != criteria['value']:
+                        logger.info(f"Failed country check: {data[metric]} != {criteria['value']}")
+                        return False
+                    continue
+                    
+                value = data[metric]
+                if 'required_min' in criteria and value < criteria['required_min']:
+                    logger.info(f"Failed {metric} minimum: {value} < {criteria['required_min']}")
                     return False
-                continue
-                
-            value = data[metric]
-            if 'required_min' in criteria and value < criteria['required_min']:
-                return False
-            if 'required_max' in criteria and value > criteria['required_max']:
-                return False
-        
-        # Check Buffett criteria if available
-        if 'sga_to_gross_profit' in data:
+                if 'required_max' in criteria and value > criteria['required_max']:
+                    logger.info(f"Failed {metric} maximum: {value} > {criteria['required_max']}")
+                    return False
+            
+            # Check ALL Buffett criteria
             for metric, criteria in self.buffett_metrics.items():
                 value = data[metric]
                 if 'required_min' in criteria and value < criteria['required_min']:
+                    logger.info(f"Failed Buffett {metric} minimum: {value} < {criteria['required_min']}")
                     return False
                 if 'required_max' in criteria and value > criteria['required_max']:
+                    logger.info(f"Failed Buffett {metric} maximum: {value} > {criteria['required_max']}")
                     return False
-        
-        return True
-    
+            
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error checking criteria: {e}")
+            return False
+
     def meets_all_criteria(self, data: Dict) -> bool:
         """Check if stock meets minimum required criteria"""
         try:
@@ -318,6 +341,7 @@ class FundamentalAnalyzer:
             for metric, criteria in self.fundamental_metrics.items():
                 if metric == 'country':
                     if data.get(metric) != criteria['value']:
+                        logger.info(f"Failed {metric}: {data[metric]} != {criteria['value']}")
                         return False
                     continue
                     
@@ -460,5 +484,5 @@ class FundamentalAnalyzer:
             'status': 'analyzed',
             'score': score,
             'raw_metrics': data,
-            'meets_criteria': score > 0
+            'meets_criteria': score >= 70  # Require at least 70% score to pass
         } 

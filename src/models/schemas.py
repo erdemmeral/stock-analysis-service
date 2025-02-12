@@ -1,14 +1,21 @@
 from typing import Dict, Union, List, Any
 from datetime import datetime
-from pydantic import BaseModel
+from pydantic import BaseModel, Field, validator
 
 class WatchlistUpdate(BaseModel):
     last_analysis: datetime
-    technical_score: float
+    technical_score: float = Field(ge=0, le=100)
     technical_scores: Dict[str, float]  # timeframe scores
-    news_score: float
+    news_score: float = Field(ge=0, le=100)
     news_sentiment: str
     risk_level: str
+
+    @validator('technical_scores')
+    def validate_technical_scores(cls, v):
+        for score in v.values():
+            if not 0 <= score <= 100:
+                raise ValueError('Technical scores must be between 0 and 100')
+        return v
 
 class TechnicalAnalysis(BaseModel):
     scores: Dict[str, Union[float, Dict[str, float]]]
@@ -16,7 +23,7 @@ class TechnicalAnalysis(BaseModel):
     support_resistance: Dict[str, List[float]]
 
 class NewsAnalysis(BaseModel):
-    score: float
+    score: float = Field(ge=0, le=100)
     sentiment: str
     confidence: str
     article_count: int
