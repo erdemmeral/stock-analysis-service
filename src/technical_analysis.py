@@ -24,28 +24,33 @@ class TechnicalAnalyzer:
         }
 
     def analyze_stock(self, ticker: str) -> Dict:
-        """Main analysis function"""
+        """Main analysis function with timeframe-specific requirements"""
         try:
-            # Get data for all timeframes
             analyses = {}
             timeframe_scores = {}
+            
+            # Different minimum periods per timeframe
+            min_periods = {
+                'short': 30,   # 30 days for short-term
+                'medium': 90,  # 90 days for medium-term
+                'long': 200    # 200 days for long-term
+            }
             
             for tf in ['short', 'medium', 'long']:
                 config = TIMEFRAME_CONFIGS[tf]
                 stock = yf.Ticker(ticker)
                 hist = stock.history(period=config['period'], interval=config['interval'])
                 
-                if hist.empty or len(hist) < 30:
-                    logger.warning(f"Insufficient data for {tf} timeframe")
+                # Check minimum required periods
+                if len(hist) < min_periods[tf]:
+                    logger.warning(f"Insufficient data for {tf} timeframe: {len(hist)} < {min_periods[tf]}")
                     continue
-                    
+                
                 analysis = self._analyze_timeframe(hist, config)
                 analyses[tf] = analysis
                 timeframe_scores[tf] = analysis['technical_score']['total']
-
-            # If no valid analyses, return empty structure
+            
             if not analyses:
-                logger.error("No valid analyses available")
                 return self.get_empty_analysis()
             
             # Get the primary timeframe analysis
@@ -80,28 +85,134 @@ class TechnicalAnalyzer:
             return self.get_empty_analysis()
 
     def _analyze_timeframe(self, hist: pd.DataFrame, config: Dict) -> Dict:
-        """Analyze single timeframe"""
-        current_price = float(hist['Close'].iloc[-1])
+        """Analyze a single timeframe with improved signal handling"""
+        try:
+            # Calculate indicators with proper NaN handling
+            signals = {
+                'current_price': float(hist['Close'].iloc[-1]),
+                'momentum': self._calculate_momentum(hist),
+                'trend': self._calculate_trend(hist),
+                'volume': self._calculate_volume(hist),
+                'moving_averages': self._calculate_ma_signals(hist),
+                'volatility': self._calculate_volatility(hist)
+            }
+            
+            # Calculate support/resistance with dynamic windows
+            volatility = signals['volatility']['daily']
+            window_size = max(20, int(20 * (1 + volatility)))  # Adjust window based on volatility
+            support_resistance = self._calculate_support_resistance(hist, window_size)
+            
+            # Calculate technical score
+            technical_score = self._calculate_score(signals)
+            
+            return {
+                'signals': signals,
+                'support_resistance': support_resistance,
+                'technical_score': technical_score
+            }
+            
+        except Exception as e:
+            logger.error(f"Error in timeframe analysis: {e}")
+            return self.get_empty_analysis()
+
+    def _calculate_trend(self, hist: pd.DataFrame) -> Dict:
+        """Calculate trend indicators with proper NaN handling"""
+        # Calculate MACD
+        macd = ta.trend.MACD(hist['Close'])
+        macd_line = macd.macd()
+        signal_line = macd.macd_signal()
         
-        signals = {
-            'current_price': current_price,
-            'momentum': self._get_momentum(hist),
-            'trend': self._get_trend(hist),
-            'volume': self._get_volume(hist),
-            'moving_averages': self._get_moving_averages(hist, config),
-            'volatility': self._get_volatility(hist)
-        }
-
-        sr_levels = self._get_support_resistance(hist)
-        tech_score = self._calculate_score(signals)
-
+        # Trim initial NaN periods instead of filling
+        valid_index = macd_line.first_valid_index()
+        if valid_index:
+            macd_line = macd_line[valid_index:]
+            signal_line = signal_line[valid_index:]
+        
+        # Get latest values
+        current_macd = float(macd_line.iloc[-1])
+        current_signal = float(signal_line.iloc[-1])
+        
+        # Determine trend direction and strength
+        trend_strength = abs(current_macd - current_signal)
+        if current_macd > current_signal:
+            direction = 'strong_bullish' if trend_strength > 0.5 else 'bullish'
+        else:
+            direction = 'strong_bearish' if trend_strength > 0.5 else 'bearish'
+        
         return {
-            'signals': signals,
-            'support_resistance': sr_levels,
-            'technical_score': tech_score
+            'direction': direction,
+            'strength': trend_strength,
+            'macd': current_macd,
+            'macd_signal': current_signal,
+            'macd_trend': 'bullish' if current_macd > current_signal else 'bearish'
         }
 
-    def _get_volatility(self, hist: pd.DataFrame) -> Dict:
+    def _calculate_momentum(self, hist: pd.DataFrame) -> Dict:
+        """Calculate momentum indicators with aligned thresholds"""
+        # RSI with aligned thresholds
+        rsi = ta.momentum.RSIIndicator(hist['Close'], window=14).rsi()
+        
+        # Stochastic with proper period handling
+        stoch = ta.momentum.StochasticOscillator(
+            hist['High'], hist['Low'], hist['Close']
+        )
+        
+        return {
+            'rsi': float(rsi.iloc[-1]),
+            'stochastic': {
+                'k': float(stoch.stoch().iloc[-1]),
+                'd': float(stoch.stoch_signal().iloc[-1])
+            }
+        }
+
+    def _calculate_score(self, signals: Dict) -> Dict:
+        """Calculate weighted technical score with aligned thresholds"""
+        # RSI scoring aligned with buy conditions
+        rsi = signals['momentum']['rsi']
+        rsi_score = (
+            90 if rsi < 35 else      # Strong buy (aligned with conditions)
+            80 if 35 <= rsi < 40 else # Buy zone
+            70 if 40 <= rsi < 45 else # Weak buy
+            60 if 45 <= rsi < 50 else # Slightly bullish
+            50 if 50 <= rsi < 55 else # Neutral
+            40 if 55 <= rsi < 60 else # Slightly bearish
+            30 if 60 <= rsi < 65 else # Weak sell
+            20                        # Strong sell
+        )
+        
+        # Trend scoring with higher weight for alignment
+        trend_score = {
+            'strong_bullish': 100,
+            'bullish': 75,
+            'neutral': 50,
+            'bearish': 25,
+            'strong_bearish': 0
+        }[signals['trend']['direction']]
+        
+        # Volume scoring
+        volume_score = {
+            'high': 100,
+            'increasing': 75,
+            'normal': 50,
+            'decreasing': 25,
+            'low': 0
+        }[signals['volume']['profile']]
+        
+        # Weighted final score with emphasis on trend
+        total_score = (
+            rsi_score * 0.3 +        # 30% weight
+            trend_score * 0.5 +      # 50% weight (increased)
+            volume_score * 0.2       # 20% weight
+        )
+        
+        return {
+            'total': total_score,
+            'momentum': rsi_score,
+            'trend': trend_score,
+            'volume': volume_score
+        }
+
+    def _calculate_volatility(self, hist: pd.DataFrame) -> Dict:
         """Calculate volatility metrics"""
         returns = hist['Close'].pct_change()
         
@@ -128,187 +239,7 @@ class TechnicalAnalyzer:
                          'low'
         }
 
-    def _get_trend(self, hist: pd.DataFrame) -> Dict:
-        """Enhanced trend analysis"""
-        try:
-            logger.info(f"Starting trend analysis with {len(hist)} data points")
-            
-            # MACD calculation with NaN handling
-            macd = ta.trend.MACD(
-                hist['Close'], 
-                self.periods['macd_fast'], 
-                self.periods['macd_slow'], 
-                self.periods['macd_signal']
-            )
-            macd_series = macd.macd()
-            signal_series = macd.macd_signal()
-            
-            # Handle NaN values in MACD
-            macd_series = macd_series.fillna(0)
-            signal_series = signal_series.fillna(0)
-            
-            macd_val = float(macd_series.iloc[-1])
-            signal_val = float(signal_series.iloc[-1])
-            
-            # ADX for trend strength - handle potential NaN values
-            adx = ta.trend.ADXIndicator(hist['High'], hist['Low'], hist['Close'])
-            adx_series = adx.adx()
-            # Drop NaN values that ADX calculation might introduce
-            adx_series = adx_series.fillna(0)
-            logger.info(f"After ADX calculation and NaN handling: {len(adx_series)} valid points")
-            
-            adx_value = float(adx_series.iloc[-1])
-            
-            # Price action trend - Adapt window size based on available data
-            available_points = len(hist)
-            window_size = min(20, available_points - 1)  # Ensure we don't exceed available data
-            logger.info(f"Using window size of {window_size} for trend analysis")
-            
-            closes = hist['Close'].tail(window_size)
-            highs = hist['High'].tail(window_size)
-            lows = hist['Low'].tail(window_size)
-            
-            logger.info(f"After tail selection: closes={len(closes)}, highs={len(highs)}, lows={len(lows)}")
-            
-            # Check if we have enough data points for trend analysis
-            if len(closes) < 3:
-                logger.warning("Insufficient data points for trend analysis")
-                return {
-                    'direction': 'neutral',
-                    'strength': adx_value,
-                    'macd': macd_val,
-                    'macd_signal': signal_val,
-                    'macd_trend': 'neutral'
-                }
-            
-            # Calculate trends
-            higher_highs = all(highs.iloc[i] <= highs.iloc[i + 1] for i in range(len(highs) - 1))
-            higher_lows = all(lows.iloc[i] <= lows.iloc[i + 1] for i in range(len(lows) - 1))
-            lower_highs = all(highs.iloc[i] >= highs.iloc[i + 1] for i in range(len(highs) - 1))
-            lower_lows = all(lows.iloc[i] >= lows.iloc[i + 1] for i in range(len(lows) - 1))
-            
-            if higher_highs and higher_lows:
-                pa_trend = 'strong_bullish'
-            elif lower_highs and lower_lows:
-                pa_trend = 'strong_bearish'
-            elif higher_lows:
-                pa_trend = 'bullish'
-            elif lower_highs:
-                pa_trend = 'bearish'
-            else:
-                pa_trend = 'neutral'
-            
-            return {
-                'direction': pa_trend,
-                'strength': adx_value,
-                'macd': macd_val,
-                'macd_signal': signal_val,
-                'macd_trend': 'bullish' if macd_val > signal_val else 'bearish'
-            }
-            
-        except Exception as e:
-            logger.error(f"Error in trend analysis: {e}")
-            return {
-                'direction': 'neutral',
-                'strength': 0,
-                'macd': 0,
-                'macd_signal': 0,
-                'macd_trend': 'neutral'
-            }
-
-    def _combine_timeframe_analyses(self, analyses: Dict) -> Dict:
-        """Combine analyses from different timeframes"""
-        try:
-            # Get scores for each timeframe
-            timeframe_scores = {}
-            for tf, analysis in analyses.items():
-                timeframe_scores[tf] = {
-                    'score': analysis['technical_score']['total'],
-                    'signals': analysis['signals']
-                }
-            
-            # Determine best timeframe and highest score
-            best_timeframe = max(timeframe_scores.items(), key=lambda x: x[1]['score'])[0]
-            highest_score = timeframe_scores[best_timeframe]['score']
-            
-            # Count bullish timeframes
-            bullish_count = sum(
-                1 for tf_data in timeframe_scores.values()
-                if tf_data['signals']['trend']['direction'] in ['bullish', 'strong_bullish']
-            )
-            
-            # Buy signal conditions - Updated for new RSI interpretation
-            buy_conditions = {
-                'score_threshold': highest_score >= 70,  # High overall score
-                'rsi_condition': any(
-                    tf_data['signals']['momentum']['rsi'] < 40  # Changed: RSI below 40 (potential oversold)
-                    for tf_data in timeframe_scores.values()
-                ),
-                'trend_alignment': bullish_count >= 2,  # At least 2 timeframes show bullish trend
-                'macd_confirmation': any(
-                    tf_data['signals']['trend']['macd'] > tf_data['signals']['trend']['macd_signal']
-                    for tf_data in timeframe_scores.values()
-                ),
-                'volume_confirmation': any(
-                    tf_data['signals']['volume']['profile'] in ['high', 'increasing']
-                    for tf_data in timeframe_scores.values()
-                )
-            }
-            
-            # Buy signal requires meeting at least 3 conditions
-            buy_signal = sum(buy_conditions.values()) >= 3
-            
-            return {
-                'timeframes': {
-                    tf: {
-                        'score': data['score'],
-                        'trend': data['signals']['trend']['direction']
-                    }
-                    for tf, data in timeframe_scores.items()
-                },
-                'summary': {
-                    'highest_score': highest_score,
-                    'best_timeframe': best_timeframe,
-                    'bullish_timeframes': bullish_count,
-                    'buy_signal': buy_signal,
-                    'conditions_met': sum(buy_conditions.values()),
-                    'buy_conditions': buy_conditions
-                },
-                'signals': timeframe_scores[best_timeframe]['signals'],
-                'support_resistance': analyses[best_timeframe]['support_resistance']
-            }
-            
-        except Exception as e:
-            logger.error(f"Error combining timeframe analyses: {e}")
-            return self.get_empty_analysis()
-
-    def _calculate_alignment_score(self, trends: Dict) -> float:
-        """Calculate how well timeframes are aligned"""
-        if not trends:
-            return 0.0
-            
-        bullish_count = sum(1 for t in trends.values() 
-                          if 'bullish' in t)
-        bearish_count = sum(1 for t in trends.values() 
-                          if 'bearish' in t)
-        
-        # Perfect alignment = 1.0, Complete disagreement = 0.0
-        return max(bullish_count, bearish_count) / len(trends)
-
-    def _get_momentum(self, hist: pd.DataFrame) -> Dict:
-        """Calculate RSI and Stochastic"""
-        rsi = ta.momentum.RSIIndicator(hist['Close'], self.periods['rsi']).rsi()
-        stoch = ta.momentum.StochasticOscillator(hist['High'], hist['Low'], hist['Close'])
-        
-        return {
-            'rsi': float(rsi.iloc[-1]),
-            'stochastic': {
-                'k': float(stoch.stoch().iloc[-1]),
-                'd': float(stoch.stoch_signal().iloc[-1])
-            }
-        }
-
-    def _get_volume(self, hist: pd.DataFrame) -> Dict:
+    def _calculate_volume(self, hist: pd.DataFrame) -> Dict:
         """Analyze volume trend"""
         recent_vol = hist['Volume'].tail(5).mean()
         avg_vol = hist['Volume'].mean()
@@ -327,7 +258,7 @@ class TechnicalAnalyzer:
             'value': float(recent_vol)
         }
 
-    def _get_moving_averages(self, hist: pd.DataFrame, config: Dict) -> Dict:
+    def _calculate_ma_signals(self, hist: pd.DataFrame) -> Dict:
         """Calculate moving averages"""
         ma_short = ta.trend.SMAIndicator(hist['Close'], self.periods['ma_short']).sma_indicator()
         ma_long = ta.trend.SMAIndicator(hist['Close'], self.periods['ma_long']).sma_indicator()
@@ -340,79 +271,15 @@ class TechnicalAnalyzer:
             'aligned': current_short > current_long
         }
 
-    def _get_support_resistance(self, hist: pd.DataFrame) -> Dict:
+    def _calculate_support_resistance(self, hist: pd.DataFrame, window_size: int) -> Dict:
         """Find support and resistance levels"""
         price_data = hist['Close'].values
-        window = 20
-        
-        support = sorted(price_data[argrelextrema(price_data, np.less, order=window)[0]], reverse=True)
-        resistance = sorted(price_data[argrelextrema(price_data, np.greater, order=window)[0]])
+        support = sorted(price_data[argrelextrema(price_data, np.less, order=window_size)[0]], reverse=True)
+        resistance = sorted(price_data[argrelextrema(price_data, np.greater, order=window_size)[0]])
         
         return {
             'support': support[:3],
             'resistance': resistance[:3]
-        }
-
-    def _calculate_score(self, signals: Dict) -> Dict:
-        """Calculate technical score with more granular analysis"""
-        # Momentum score (RSI based)
-        rsi = signals['momentum']['rsi']
-        stoch_k = signals['momentum']['stochastic']['k']
-        
-        # More granular RSI scoring
-        momentum_score = (
-            90 if rsi < 30 else         # Strong buy (oversold)
-            80 if 30 <= rsi < 35 else   # Buy zone
-            70 if 35 <= rsi < 40 else   # Weak buy
-            60 if 40 <= rsi < 45 else   # Slightly bullish
-            50 if 45 <= rsi < 55 else   # Neutral
-            40 if 55 <= rsi < 60 else   # Slightly bearish
-            30 if 60 <= rsi < 65 else   # Weak sell
-            20 if 65 <= rsi < 70 else   # Sell zone
-            10                          # Strong sell (overbought >70)
-        )
-        
-        # Add stochastic influence
-        stoch_score = 100 - abs(stoch_k - 50)  # Higher score when closer to extremes
-        momentum_score = (momentum_score + stoch_score) / 2
-
-        # Rest of the scoring logic...
-        base_trend_score = {
-            'strong_bullish': 100,
-            'bullish': 75,
-            'neutral': 50,
-            'bearish': 25,
-            'strong_bearish': 0
-        }[signals['trend']['direction']]
-        
-        # Adjust trend score based on MACD
-        macd_diff = signals['trend']['macd'] - signals['trend']['macd_signal']
-        trend_score = base_trend_score + (macd_diff * 10)
-        trend_score = max(0, min(100, trend_score))
-
-        # Volume score with volatility influence
-        base_volume_score = {
-            'high': 100,
-            'increasing': 75,
-            'normal': 50,
-            'decreasing': 25
-        }[signals['volume']['profile']]
-        
-        # Calculate final score
-        total_score = (
-            momentum_score * 0.3 +    # 30% weight
-            trend_score * 0.5 +       # 50% weight
-            base_volume_score * 0.2   # 20% weight
-        )
-        
-        # Ensure score is between 0 and 100
-        total_score = max(0, min(100, total_score))
-
-        return {
-            'total': total_score,
-            'momentum': momentum_score,
-            'trend': trend_score,
-            'volume': base_volume_score
         }
 
     def get_empty_analysis(self) -> Dict:

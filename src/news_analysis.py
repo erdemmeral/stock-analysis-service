@@ -20,14 +20,8 @@ class NewsAnalyzer:
     def analyze_article_sentiment(self, text: str) -> Dict:
         """Analyze sentiment of article text using FinBERT-tone"""
         try:
-            # Truncate text to model's maximum length
-            max_length = 512
-            inputs = self.tokenizer(text, 
-                                  return_tensors="pt", 
-                                  truncation=True, 
-                                  max_length=max_length)
-            
             # Get model outputs
+            inputs = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
             with torch.no_grad():
                 outputs = self.model(**inputs)
                 probabilities = torch.nn.functional.softmax(outputs.logits, dim=1)
@@ -35,33 +29,32 @@ class NewsAnalyzer:
             # Convert to numpy for easier handling
             probs = probabilities.detach().numpy()[0]
             
-            # Get predicted label and confidence
+            # Map sentiment scores:
+            # negative: 0-35
+            # neutral: 35-65
+            # positive: 65-100
+            sentiment_mapping = {
+                0: 25,    # negative center
+                1: 50,    # neutral center
+                2: 75     # positive center
+            }
+            
+            # Get predicted class and confidence
             predicted_class = np.argmax(probs)
             confidence = float(probs[predicted_class])
             
-            # Map sentiment scores:
-            # negative: -1.0
-            # neutral: 0.0
-            # positive: 1.0
-            sentiment_mapping = {
-                0: -1.0,  # negative
-                1: 0.0,   # neutral
-                2: 1.0    # positive
-            }
-            sentiment_score = sentiment_mapping[predicted_class]
+            # Calculate final sentiment score (0-100)
+            base_score = sentiment_mapping[predicted_class]
+            score_adjustment = (confidence - 0.33) * 30  # Adjust based on confidence
+            final_score = base_score + score_adjustment
             
-            logger.info(f"Sentiment Analysis - Label: {self.labels[predicted_class]}, Score: {sentiment_score}")
-            logger.debug(f"Probabilities - Neg: {probs[0]:.3f}, Neu: {probs[1]:.3f}, Pos: {probs[2]:.3f}")
+            # Ensure score is in 0-100 range
+            final_score = max(0, min(100, final_score))
             
             return {
-                'label': self.labels[predicted_class],
-                'confidence': confidence,
-                'sentiment_score': sentiment_score,
-                'probabilities': {
-                    'negative': float(probs[0]),
-                    'neutral': float(probs[1]),
-                    'positive': float(probs[2])
-                }
+                'sentiment_score': final_score,
+                'label': 'negative' if final_score < 35 else 'positive' if final_score > 65 else 'neutral',
+                'confidence': confidence
             }
             
         except Exception as e:
@@ -315,10 +308,10 @@ class NewsAnalyzer:
             else:
                 news_score = 50
             
-            # Determine overall sentiment
-            if news_score >= 65:
+            # Updated sentiment thresholds
+            if news_score >= 60:  # Lowered from 65
                 sentiment = 'positive'
-            elif news_score <= 35:
+            elif news_score <= 40:  # Raised from 35
                 sentiment = 'negative'
             else:
                 sentiment = 'neutral'

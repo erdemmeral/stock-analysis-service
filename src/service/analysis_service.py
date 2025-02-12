@@ -477,37 +477,32 @@ class AnalysisService:
             for tf, score in tech_analysis['technical_score']['timeframes'].items():
                 logger.info(f"  {tf}: {score:.2f}")
             logger.info(f"News Score: {news_score:.2f}")
-            logger.info(f"News Sentiment: {news_analysis['sentiment']}")
             
-            # Check technical criteria
-            tech_criteria = tech_score >= self.portfolio_threshold
-            
-            # Check timeframe alignment
+            # Technical criteria - require strong alignment
             timeframe_scores = tech_analysis['technical_score']['timeframes']
-            aligned_bullish = all(score >= 55 for score in timeframe_scores.values())
-            aligned_bearish = all(score <= 45 for score in timeframe_scores.values())
+            aligned_bullish = all(score >= 60 for score in timeframe_scores.values())
             
-            # Check news criteria
+            # Updated news criteria - more lenient
             news_criteria = (
-                news_score >= 60 and news_analysis['sentiment'] == 'positive'
+                news_score >= 40 and  # Lowered threshold
+                news_analysis['sentiment'] in ['positive', 'neutral']  # Allow neutral
             )
             
-            # Check risk level
+            # Risk check
             risk_level = tech_analysis['signals']['volatility']['risk_level']
             risk_acceptable = risk_level in ['low', 'medium']
             
             # Log decision factors
             logger.info("\nDecision Factors:")
-            logger.info(f"Technical Score >= {self.portfolio_threshold}: {tech_criteria}")
-            logger.info(f"Timeframe Alignment - Bullish: {aligned_bullish}, Bearish: {aligned_bearish}")
-            logger.info(f"News Score >= 60 and Positive: {news_criteria}")
-            logger.info(f"Risk Level Acceptable ({risk_level}): {risk_acceptable}")
+            logger.info(f"Technical Score: {tech_score:.2f}")
+            logger.info(f"Timeframe Alignment - Bullish: {aligned_bullish}")
+            logger.info(f"News Score ({news_score:.2f}) >= 40: {news_criteria}")
+            logger.info(f"Risk Level ({risk_level}): {risk_acceptable}")
             
-            # Final decision
+            # Final decision - require strong technical setup
             should_enter = (
-                tech_criteria and
-                (aligned_bullish or aligned_bearish) and
-                news_criteria and
+                (aligned_bullish and tech_score >= 65) and  # Strong technical setup
+                news_criteria and  # More lenient news requirement
                 risk_acceptable
             )
             
