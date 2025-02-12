@@ -337,7 +337,7 @@ class TechnicalAnalyzer:
         rsi = signals['momentum']['rsi']
         stoch_k = signals['momentum']['stochastic']['k']
         
-        # More granular RSI scoring - Fixed to align with traditional interpretation
+        # More granular RSI scoring
         momentum_score = (
             90 if rsi < 30 else         # Strong buy (oversold)
             80 if 30 <= rsi < 35 else   # Buy zone
@@ -350,11 +350,11 @@ class TechnicalAnalyzer:
             10                          # Strong sell (overbought >70)
         )
         
-        # Add stochastic influence - also aligned with traditional interpretation
+        # Add stochastic influence
         stoch_score = 100 - abs(stoch_k - 50)  # Higher score when closer to extremes
         momentum_score = (momentum_score + stoch_score) / 2
 
-        # Trend score with MACD influence
+        # Rest of the scoring logic...
         base_trend_score = {
             'strong_bullish': 100,
             'bullish': 75,
@@ -376,34 +376,21 @@ class TechnicalAnalyzer:
             'decreasing': 25
         }[signals['volume']['profile']]
         
-        # Adjust volume score based on volatility risk
-        vol_adjustment = {
-            'low': 10,
-            'medium': 0,
-            'high': -10
-        }[signals['volatility']['risk_level']]
-        
-        volume_score = base_volume_score + vol_adjustment
-        volume_score = max(0, min(100, volume_score))
-
-        # Final weighted score with moving average alignment bonus
+        # Calculate final score
         total_score = (
             momentum_score * 0.3 +    # 30% weight
             trend_score * 0.5 +       # 50% weight
-            volume_score * 0.2        # 20% weight
+            base_volume_score * 0.2   # 20% weight
         )
         
-        # Add bonus for moving average alignment
-        if signals['moving_averages']['aligned']:
-            total_score += 5
-        
+        # Ensure score is between 0 and 100
         total_score = max(0, min(100, total_score))
 
         return {
             'total': total_score,
             'momentum': momentum_score,
             'trend': trend_score,
-            'volume': volume_score
+            'volume': base_volume_score
         }
 
     def get_empty_analysis(self) -> Dict:

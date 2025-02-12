@@ -43,4 +43,8 @@ logs/
 combined_analysis_*.json
 
 # Fly.io
-.fly/ 
+.fly/
+
+# Presentation materials
+presentation/*
+!presentation/README.md 

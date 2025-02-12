@@ -263,7 +263,14 @@ class NewsAnalyzer:
             # Get news data
             news_items = self.get_stock_news(ticker)
             if not news_items:
-                return {'news_score': 50, 'sentiment': 'neutral', 'items': []}
+                logger.warning(f"No news found for {ticker}")
+                return {
+                    'news_score': 50,
+                    'sentiment': 'neutral',
+                    'items': [],
+                    'confidence': 'low',
+                    'article_count': 0
+                }
             
             logger.info(f"Found {len(news_items)} news items for {ticker}")
             
@@ -319,9 +326,11 @@ class NewsAnalyzer:
             logger.info(f"News analysis complete for {ticker} - Score: {news_score:.2f}, Sentiment: {sentiment}")
             
             return {
-                'news_score': news_score,
+                'news_score': float(news_score),
                 'sentiment': sentiment,
-                'items': processed_items[:5]  # Return top 5 most relevant items
+                'items': processed_items[:5],
+                'confidence': 'high' if len(processed_items) >= 5 else 'medium' if len(processed_items) >= 3 else 'low',
+                'article_count': len(processed_items)
             }
             
         except Exception as e:
@@ -329,7 +338,9 @@ class NewsAnalyzer:
             return {
                 'news_score': 50,
                 'sentiment': 'neutral',
-                'items': []
+                'items': [],
+                'confidence': 'low',
+                'article_count': 0
             }
 
 def run_test_analysis():

@@ -119,98 +119,49 @@ class AnalysisService:
             return []
 
     async def analyze_watchlist(self):
-        """Run technical and news analysis on watchlist stocks"""
+        """Analyze stocks in watchlist"""
         try:
-            # Get ALL stocks from watchlist instead of pending
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f'{PORTFOLIO_API_URL}/watchlist') as response:
-                    if response.status != 200:
-                        logger.error(f"Failed to get watchlist: {response.status}")
-                        return
-                    try:
-                        watchlist = await response.json()
-                        if not watchlist:
-                            logger.info("No stocks in watchlist")
-                            return
-                        
-                        logger.info(f"Retrieved {len(watchlist)} stocks for analysis")
-                        # Log the actual tickers for debugging
-                        logger.info(f"Stocks to analyze: {[stock['ticker'] for stock in watchlist]}")
-                    except Exception as e:
-                        text = await response.text()
-                        logger.error(f"Failed to parse watchlist response: {text}")
-                        return
-
-            # Analyze each stock in watchlist
+            watchlist = await self.get_watchlist()
+            
             for stock in watchlist:
                 ticker = stock['ticker']
                 try:
-                    logger.info(f"\n=== Starting analysis for {ticker} ===")
-                    
-                    # Run analyses
+                    # Get technical analysis
                     tech_analysis = self.tech_analyzer.analyze_stock(ticker)
-                    logger.info(f"{ticker} technical analysis complete")
                     
+                    # Get news analysis
                     news_analysis = self.news_analyzer.analyze_stock_news(ticker)
-                    logger.info(f"{ticker} news analysis complete")
                     
-                    # Log analysis results
-                    logger.info(f"{ticker} Analysis Results:")
-                    logger.info(f"Current Price: ${tech_analysis['signals'].get('current_price', 'N/A')}")
-                    logger.info(f"Technical Score: {tech_analysis['technical_score']['total_score']}")
-                    logger.info(f"News Score: {news_analysis['news_score']}")
+                    # Prepare update data
+                    update_data = {
+                        'last_analysis': datetime.now().isoformat(),
+                        'technical_score': tech_analysis['technical_score']['total'],
+                        'news_score': news_analysis['news_score'],
+                        'news_sentiment': news_analysis['sentiment'],
+                        'risk_level': tech_analysis['signals']['volatility']['risk_level']
+                    }
                     
+                    # Update watchlist item
                     async with aiohttp.ClientSession() as session:
-                        # Update watchlist with scores
-                        await session.patch(
+                        async with session.patch(
                             f'{PORTFOLIO_API_URL}/watchlist/{ticker}',
-                            json={
-                                'technical_score': tech_analysis['technical_score']['total_score'],
-                                'news_score': news_analysis['news_score'],
-                                'last_analysis': datetime.now().isoformat(),
-                                'notes': f"Last analyzed: {datetime.now().isoformat()}"
-                            }
-                        )
-                        logger.info(f"Updated {ticker} in watchlist")
-
-                        # Check position criteria
-                        if self.should_create_position(tech_analysis, news_analysis):
-                            logger.info(f"✅ {ticker} meets position criteria, creating position")
-                            position_data = {
-                                "ticker": ticker,
-                                "entry_price": float(tech_analysis['signals'].get('current_price', 0)),
-                                "timeframe": "medium",
-                                "technical_score": tech_analysis['technical_score']['total_score'],
-                                "news_score": news_analysis['news_score'],
-                                "support_levels": tech_analysis['support_resistance']['support']['levels'][:3],
-                                "resistance_levels": tech_analysis['support_resistance']['resistance']['levels'][:3],
-                                "trend": {
-                                    "direction": tech_analysis['trend']['trend'],
-                                    "strength": tech_analysis['trend']['strength'],
-                                    "ma_alignment": tech_analysis['signals']['moving_averages']['ma_aligned']
-                                },
-                                "signals": {
-                                    "rsi": tech_analysis['signals']['momentum']['rsi'],
-                                    "macd": {
-                                        "value": tech_analysis['signals']['trend']['macd'],
-                                        "signal": tech_analysis['signals']['trend']['macd_trend']
-                                    },
-                                    "volume_profile": tech_analysis['signals']['volume']['profile'],
-                                    "predicted_move": tech_analysis['predictions']['final']['predicted_change_percent']
-                                }
-                            }
-                            
-                            position_response = await session.post(
-                                f'{PORTFOLIO_API_URL}/positions',
-                                json=position_data
-                            )
-                            if position_response.status == 200:
-                                logger.info(f"Successfully created position for {ticker}")
-                            else:
-                                logger.error(f"Failed to create position for {ticker}: {position_response.status}")
-                        else:
-                            logger.info(f"❌ {ticker} did not meet position criteria")
+                            json=update_data
+                        ) as response:
+                            if response.status != 200:
+                                logger.error(f"Failed to update watchlist for {ticker}")
+                                continue
+                        
+                    logger.info(f"Updated analysis for {ticker}")
                     
+                    # Check if we should create a position
+                    if self.should_create_position(tech_analysis, news_analysis):
+                        await self.handle_portfolio_addition(
+                            ticker,
+                            tech_analysis['technical_score']['total'],
+                            tech_analysis,
+                            news_analysis
+                        )
+                        
                 except Exception as e:
                     logger.error(f"Error analyzing {ticker}: {e}")
                     continue
