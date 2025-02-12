@@ -463,95 +463,57 @@ class AnalysisService:
         return "Multiple Technical Indicators"
 
     def should_create_position(self, tech_analysis: Dict, news_analysis: Dict) -> bool:
+        """Check if we should create a position based on analysis"""
         try:
-            logger.info(f"\n=== Position Criteria Check ===")
+            logger.info("\n=== Position Criteria Check ===")
             
-            # 1. Fundamental Score Check (must be in watchlist)
-            # Stock must have passed fundamental analysis to be in watchlist
-            
-            # 2. Technical Analysis Checks
-            tech_score = tech_analysis['technical_score']['total_score']
-            trend = tech_analysis['trend']
-            signals = tech_analysis['signals']
-            
-            logger.info(f"Technical Score: {tech_score}")
-            logger.info(f"Trend Direction: {trend['direction']}")
-            logger.info(f"Trend Strength: {trend['strength']}")
-            logger.info(f"RSI: {signals['momentum']['rsi']}")
-            logger.info(f"MACD: {signals['trend']['macd_trend']}")
-            logger.info(f"Volume: {signals['volume']['profile']}")
-
-            # Dynamic Technical Score threshold based on other factors
-            min_tech_score = 75  # Base threshold
-            if trend['direction'] == 'strong_bullish' and news_analysis['news_score'] > 70:
-                min_tech_score = 65  # Lower threshold for strong trends with great news
-            
-            if tech_score < min_tech_score:
-                logger.info(f"❌ Failed: Technical score {tech_score} below threshold {min_tech_score}")
-                return False
-
-            # Trend must be bullish
-            if trend['direction'] not in ['bullish', 'strong_bullish']:
-                logger.info("❌ Failed: Not in bullish trend")
-                return False
-
-            # Dynamic RSI thresholds based on trend strength
-            rsi = signals['momentum']['rsi']
-            rsi_max = 75 if trend['direction'] == 'strong_bullish' else 70
-            if rsi > rsi_max:
-                logger.info(f"❌ Failed: RSI {rsi} above threshold {rsi_max}")
-                return False
-
-            # MACD confirmation
-            if signals['trend']['macd_trend'] != 'bullish':
-                # Allow non-bullish MACD only if all other signals are very strong
-                if not (trend['direction'] == 'strong_bullish' and 
-                       tech_score > 80 and 
-                       news_analysis['news_score'] > 65):
-                    logger.info("❌ Failed: MACD not bullish and other signals not strong enough")
-                    return False
-
-            # Volume requirement based on price action
-            if signals['volume']['profile'] not in ['increasing', 'high']:
-                logger.info("❌ Failed: Volume not supportive")
-                return False
-
-            # 3. News Analysis Checks
+            # Get scores
+            tech_score = tech_analysis['technical_score']['total']
             news_score = news_analysis['news_score']
-            logger.info(f"News Score: {news_score}")
             
-            # Dynamic news threshold based on technical strength
-            min_news_score = 55 if tech_score > 85 else 60
-            if news_score < min_news_score:
-                logger.info(f"❌ Failed: News score {news_score} below threshold {min_news_score}")
-                return False
-
-            # 4. Support/Resistance Check
-            current_price = float(tech_analysis['signals']['current_price'])
-            resistance = tech_analysis['support_resistance']['resistance']['levels'][0]
-            support = tech_analysis['support_resistance']['support']['levels'][0]
+            # Log all scores for debugging
+            logger.info(f"Technical Score: {tech_score:.2f}")
+            logger.info(f"Technical Scores by Timeframe:")
+            for tf, score in tech_analysis['technical_score']['timeframes'].items():
+                logger.info(f"  {tf}: {score:.2f}")
+            logger.info(f"News Score: {news_score:.2f}")
+            logger.info(f"News Sentiment: {news_analysis['sentiment']}")
             
-            # Allow breakout scenarios
-            price_range = resistance - support
-            breakout_threshold = resistance + (price_range * 0.02)  # 2% above resistance
+            # Check technical criteria
+            tech_criteria = tech_score >= self.portfolio_threshold
             
-            if support < current_price < resistance:
-                # Price between support and resistance
-                price_to_resistance = resistance - current_price
-                price_to_support = current_price - support
-                if price_to_support > price_to_resistance:
-                    logger.info("❌ Failed: Price closer to resistance than support")
-                    return False
-            elif current_price > breakout_threshold:
-                # Confirmed breakout
-                logger.info("✅ Breakout scenario detected")
-            else:
-                logger.info("❌ Failed: Price not in optimal position")
-                return False
-
-            logger.info("✅ All criteria passed! Creating position...")
-            return True
-
+            # Check timeframe alignment
+            timeframe_scores = tech_analysis['technical_score']['timeframes']
+            aligned_bullish = all(score >= 55 for score in timeframe_scores.values())
+            aligned_bearish = all(score <= 45 for score in timeframe_scores.values())
+            
+            # Check news criteria
+            news_criteria = (
+                news_score >= 60 and news_analysis['sentiment'] == 'positive'
+            )
+            
+            # Check risk level
+            risk_level = tech_analysis['signals']['volatility']['risk_level']
+            risk_acceptable = risk_level in ['low', 'medium']
+            
+            # Log decision factors
+            logger.info("\nDecision Factors:")
+            logger.info(f"Technical Score >= {self.portfolio_threshold}: {tech_criteria}")
+            logger.info(f"Timeframe Alignment - Bullish: {aligned_bullish}, Bearish: {aligned_bearish}")
+            logger.info(f"News Score >= 60 and Positive: {news_criteria}")
+            logger.info(f"Risk Level Acceptable ({risk_level}): {risk_acceptable}")
+            
+            # Final decision
+            should_enter = (
+                tech_criteria and
+                (aligned_bullish or aligned_bearish) and
+                news_criteria and
+                risk_acceptable
+            )
+            
+            logger.info(f"\nFinal Decision: {'ENTER' if should_enter else 'SKIP'}")
+            return should_enter
+            
         except Exception as e:
             logger.error(f"Error checking position criteria: {e}")
             return False

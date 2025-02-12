@@ -438,11 +438,21 @@ class TechnicalAnalyzer:
                 }
             },
             'support_resistance': {'support': [0], 'resistance': [0]},
-            'technical_score': {'total': 50, 'momentum': 50, 'trend': 50, 'volume': 50},
-            'timeframes': {
-                'short': {'trend': 'neutral', 'score': 50},
-                'medium': {'trend': 'neutral', 'score': 50},
-                'long': {'trend': 'neutral', 'score': 50}
+            'technical_score': {
+                'total': 50,
+                'momentum': 50,
+                'trend': 50,
+                'volume': 50,
+                'timeframes': {
+                    'short': 50,
+                    'medium': 50,
+                    'long': 50
+                }
+            },
+            'timeframe_scores': {
+                'short': 50,
+                'medium': 50,
+                'long': 50
             }
         }
 
@@ -450,108 +460,41 @@ def run_test_analysis():
     """Test function to verify technical analysis"""
     logger.info("Starting technical analysis test...")
     
+    # Initialize analyzer
+    analyzer = TechnicalAnalyzer()
+    
+    # Test with a well-known stock
     test_ticker = "AAPL"
-    analyzer = TechnicalAnalyzer(timeframe='medium')
     
     try:
-        # Get stock data first to verify we have enough data
-        stock = yf.Ticker(test_ticker)
-        hist = stock.history(period="3mo", interval="1d")  # Get 3 months of daily data
-        
-        if len(hist) < 30:
-            logger.error(f"Insufficient data points. Got {len(hist)}, need at least 30")
-            return False
-            
-        logger.info(f"Retrieved {len(hist)} data points for analysis")
-        
+        # Get analysis
         analysis = analyzer.analyze_stock(test_ticker)
         
         print("\n=== Technical Analysis Test Results ===")
         print(f"Stock: {test_ticker}")
         
-        # First show the main (medium term) analysis
-        print("\n=== MEDIUM TERM ANALYSIS (Primary) ===")
-        print("\n1. Price Information:")
-        print(f"Current Price: ${analysis['signals']['current_price']:.2f}")
+        print("\n1. Technical Scores:")
+        print(f"Combined Score: {analysis['technical_score']['total']:.2f}")
+        print("\nTimeframe Scores:")
+        for tf, score in analysis['technical_score']['timeframes'].items():
+            print(f"{tf.capitalize()}: {score:.2f}")
         
-        print("\n2. Momentum Analysis:")
-        print(f"RSI: {analysis['signals']['momentum']['rsi']:.2f}")
-        print(f"Stochastic K: {analysis['signals']['momentum']['stochastic']['k']:.2f}")
-        print(f"Stochastic D: {analysis['signals']['momentum']['stochastic']['d']:.2f}")
+        print("\n2. Component Scores:")
+        print(f"Momentum: {analysis['technical_score']['momentum']:.2f}")
+        print(f"Trend: {analysis['technical_score']['trend']:.2f}")
+        print(f"Volume: {analysis['technical_score']['volume']:.2f}")
         
-        print("\n3. Trend Analysis:")
-        print(f"Direction: {analysis['signals']['trend']['direction']}")
-        print(f"Strength (ADX): {analysis['signals']['trend']['strength']:.2f}")
-        print(f"MACD: {analysis['signals']['trend']['macd']:.2f}")
-        print(f"MACD Signal: {analysis['signals']['trend']['macd_signal']:.2f}")
-        print(f"MACD Trend: {analysis['signals']['trend']['macd_trend']}")
+        print("\n3. Signal Details:")
+        signals = analysis['signals']
+        print(f"RSI: {signals['momentum']['rsi']:.2f}")
+        print(f"Trend Direction: {signals['trend']['direction']}")
+        print(f"Volume Profile: {signals['volume']['profile']}")
+        print(f"Risk Level: {signals['volatility']['risk_level']}")
         
-        print("\n4. Volume Profile:")
-        print(f"Status: {analysis['signals']['volume']['profile']}")
-        print(f"Value: {analysis['signals']['volume']['value']:,.0f}")
-        
-        print("\n5. Moving Averages:")
-        print(f"Short MA Period: {analyzer.config['ma_short']} days")
-        print(f"Long MA Period: {analyzer.config['ma_long']} days")
-        print(f"Trend: {analysis['signals']['moving_averages']['trend']}")
-        print(f"Aligned: {analysis['signals']['moving_averages']['aligned']}")
-        
-        print("\n6. Volatility Analysis:")
-        print(f"Daily: {analysis['signals']['volatility']['daily']:.4f}")
-        print(f"Annual: {analysis['signals']['volatility']['annual']:.4f}")
-        print(f"Trend: {analysis['signals']['volatility']['trend']}")
-        print(f"Risk Level: {analysis['signals']['volatility']['risk_level']}")
-        
-        print("\n7. Support/Resistance Levels:")
-        print(f"Support Levels: {[f'${x:.2f}' for x in analysis['support_resistance']['support']]}")
-        print(f"Resistance Levels: {[f'${x:.2f}' for x in analysis['support_resistance']['resistance']]}")
-        
-        print("\n8. Technical Score:")
-        print(f"Total Score: {analysis['technical_score']['total']:.2f}")
-        print(f"Momentum Score: {analysis['technical_score']['momentum']:.2f}")
-        print(f"Trend Score: {analysis['technical_score']['trend']:.2f}")
-        print(f"Volume Score: {analysis['technical_score']['volume']:.2f}")
-        
-        # Now show comparison across timeframes
-        print("\n=== MULTI-TIMEFRAME COMPARISON ===")
-        for tf, data in analysis['timeframes'].items():
-            print(f"\n{tf.upper()} TERM:")
-            print(f"Period: {TIMEFRAME_CONFIGS[tf]['period']}")
-            print(f"MA Periods: {TIMEFRAME_CONFIGS[tf]['ma_short']}/{TIMEFRAME_CONFIGS[tf]['ma_long']} days")
-            print(f"Trend Direction: {data['trend']}")
-            print(f"Technical Score: {data['score']:.2f}")
-            
-        # Show timeframe alignment
-        bullish_timeframes = sum(1 for data in analysis['timeframes'].values() if 'bullish' in data['trend'])
-        bearish_timeframes = sum(1 for data in analysis['timeframes'].values() if 'bearish' in data['trend'])
-        neutral_timeframes = sum(1 for data in analysis['timeframes'].values() if data['trend'] == 'neutral')
-        
-        print("\nTimeframe Alignment:")
-        print(f"Bullish Timeframes: {bullish_timeframes}")
-        print(f"Bearish Timeframes: {bearish_timeframes}")
-        print(f"Neutral Timeframes: {neutral_timeframes}")
-        
-        # Final Analysis Summary
-        print("\n=== FINAL ANALYSIS SUMMARY ===")
-        avg_score = sum(data['score'] for data in analysis['timeframes'].values()) / len(analysis['timeframes'])
-        print(f"Average Score Across Timeframes: {avg_score:.2f}")
-        print(f"Primary Timeframe Score: {analysis['technical_score']['total']:.2f}")
-        print(f"Overall Trend Alignment: {'Strong' if bullish_timeframes == 3 or bearish_timeframes == 3 else 'Mixed'}")
-        print(f"Risk Level: {analysis['signals']['volatility']['risk_level'].upper()}")
-        
-        # Add to test function, before "=== Test Complete ==="
-        print("\n=== TRADING SIGNAL ANALYSIS ===")
-        print(f"Highest Score: {analysis['summary']['highest_score']:.2f}")
-        print(f"Best Timeframe: {analysis['summary']['best_timeframe'].upper()}")
-        print(f"Timeframe Alignment: {analysis['summary']['alignment_score']:.2f}")
-        print(f"Valid Setup: {'YES' if analysis['summary']['is_valid_setup'] else 'NO'}")
-        print(f"Buy Signal: {'YES' if analysis['summary']['buy_signal'] else 'NO'}")
-        if analysis['summary']['buy_signal']:
-            print("\nRECOMMENDATION: BUY")
-            print(f"Best Entry Timeframe: {analysis['summary']['best_timeframe'].upper()}")
-            print(f"Current Price: ${analysis['signals']['current_price']:.2f}")
-            support_levels = analysis['support_resistance']['support']
-            print(f"Stop Loss Suggestion: ${support_levels[0]:.2f}")
+        print("\n4. Support/Resistance:")
+        sr = analysis['support_resistance']
+        print(f"Support Levels: {', '.join([f'${x:.2f}' for x in sr['support']])}")
+        print(f"Resistance Levels: {', '.join([f'${x:.2f}' for x in sr['resistance']])}")
         
         print("\n=== Test Complete ===")
         return True
