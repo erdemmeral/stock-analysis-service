@@ -128,30 +128,41 @@ class AnalysisService:
                 try:
                     # Get technical analysis
                     tech_analysis = self.tech_analyzer.analyze_stock(ticker)
+                    if not tech_analysis or 'technical_score' not in tech_analysis:
+                        logger.error(f"Invalid technical analysis for {ticker}")
+                        continue
                     
                     # Get news analysis
                     news_analysis = self.news_analyzer.analyze_stock_news(ticker)
+                    if not news_analysis or 'news_score' not in news_analysis:
+                        logger.error(f"Invalid news analysis for {ticker}")
+                        continue
+                    
+                    # Log analysis results for debugging
+                    logger.info(f"Analysis results for {ticker}:")
+                    logger.info(f"Technical Scores:")
+                    for tf, score in tech_analysis['technical_score']['timeframes'].items():
+                        logger.info(f"  {tf}: {score:.2f}")
+                    logger.info(f"Combined Technical Score: {tech_analysis['technical_score']['total']:.2f}")
+                    logger.info(f"News Score: {news_analysis['news_score']}")
                     
                     # Prepare update data
                     update_data = {
                         'last_analysis': datetime.now().isoformat(),
-                        'technical_score': tech_analysis['technical_score']['total'],
-                        'news_score': news_analysis['news_score'],
+                        'technical_score': float(tech_analysis['technical_score']['total']),
+                        'technical_scores': {
+                            tf: float(score) 
+                            for tf, score in tech_analysis['technical_score']['timeframes'].items()
+                        },
+                        'news_score': float(news_analysis['news_score']),
                         'news_sentiment': news_analysis['sentiment'],
                         'risk_level': tech_analysis['signals']['volatility']['risk_level']
                     }
                     
                     # Update watchlist item
-                    async with aiohttp.ClientSession() as session:
-                        async with session.patch(
-                            f'{PORTFOLIO_API_URL}/watchlist/{ticker}',
-                            json=update_data
-                        ) as response:
-                            if response.status != 200:
-                                logger.error(f"Failed to update watchlist for {ticker}")
-                                continue
-                        
-                    logger.info(f"Updated analysis for {ticker}")
+                    success = await self.update_watchlist_item(ticker, update_data)
+                    if not success:
+                        continue
                     
                     # Check if we should create a position
                     if self.should_create_position(tech_analysis, news_analysis):
@@ -164,6 +175,8 @@ class AnalysisService:
                         
                 except Exception as e:
                     logger.error(f"Error analyzing {ticker}: {e}")
+                    logger.error(f"Technical Analysis: {tech_analysis if 'tech_analysis' in locals() else 'Not available'}")
+                    logger.error(f"News Analysis: {news_analysis if 'news_analysis' in locals() else 'Not available'}")
                     continue
                 
         except Exception as e:
@@ -769,4 +782,38 @@ class AnalysisService:
                     return True
         except Exception as e:
             logger.error(f"API error updating position for {ticker}: {e}")
+            return False
+
+    async def update_watchlist_item(self, ticker: str, update_data: Dict) -> bool:
+        """Update a watchlist item with new analysis data"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                # First check if item exists
+                check_url = f'{PORTFOLIO_API_URL}/watchlist/{ticker}'
+                async with session.get(check_url) as response:
+                    if response.status == 404:
+                        # Item doesn't exist, create it
+                        create_data = {
+                            'ticker': ticker,
+                            **update_data
+                        }
+                        async with session.post(f'{PORTFOLIO_API_URL}/watchlist', json=create_data) as create_response:
+                            if create_response.status not in (200, 201):
+                                text = await create_response.text()
+                                logger.error(f"Failed to create watchlist item for {ticker}. Status: {create_response.status}, Response: {text}")
+                                return False
+                            logger.info(f"Created new watchlist item for {ticker}")
+                            return True
+
+                # Item exists, update it
+                async with session.patch(check_url, json=update_data) as update_response:
+                    if update_response.status != 200:
+                        text = await update_response.text()
+                        logger.error(f"Failed to update watchlist item for {ticker}. Status: {update_response.status}, Response: {text}")
+                        return False
+                    logger.info(f"Updated watchlist item for {ticker}")
+                    return True
+
+        except Exception as e:
+            logger.error(f"API error for {ticker}: {e}")
             return False

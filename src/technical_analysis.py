@@ -28,30 +28,52 @@ class TechnicalAnalyzer:
         try:
             # Get data for all timeframes
             analyses = {}
+            timeframe_scores = {}
+            
             for tf in ['short', 'medium', 'long']:
                 config = TIMEFRAME_CONFIGS[tf]
                 stock = yf.Ticker(ticker)
                 hist = stock.history(period=config['period'], interval=config['interval'])
                 
-                # Add logging to debug data size
-                logger.info(f"Retrieved {len(hist)} points for {tf} timeframe")
-                
-                if hist.empty:
-                    logger.warning(f"No data received for {tf} timeframe")
-                    continue
-                
-                if len(hist) < 30:  # Minimum required for analysis
-                    logger.warning(f"Insufficient data for {tf} timeframe: {len(hist)} points")
+                if hist.empty or len(hist) < 30:
+                    logger.warning(f"Insufficient data for {tf} timeframe")
                     continue
                     
-                analyses[tf] = self._analyze_timeframe(hist, config)
+                analysis = self._analyze_timeframe(hist, config)
+                analyses[tf] = analysis
+                timeframe_scores[tf] = analysis['technical_score']['total']
 
-            # Combine analyses for final decision
+            # If no valid analyses, return empty structure
             if not analyses:
                 logger.error("No valid analyses available")
                 return self.get_empty_analysis()
             
-            return self._combine_timeframe_analyses(analyses)
+            # Get the primary timeframe analysis
+            primary_analysis = analyses.get(self.timeframe, analyses['medium'])
+            
+            # Add all timeframe scores
+            primary_analysis['timeframe_scores'] = timeframe_scores
+            
+            # Calculate weighted average score
+            weights = {
+                'short': 0.3,
+                'medium': 0.5,
+                'long': 0.2
+            }
+            
+            total_weight = sum(weights[tf] for tf in timeframe_scores.keys())
+            weighted_score = sum(
+                timeframe_scores[tf] * weights[tf] 
+                for tf in timeframe_scores.keys()
+            ) / total_weight if total_weight > 0 else 50
+            
+            # Update technical score with combined score
+            primary_analysis['technical_score'].update({
+                'total': weighted_score,
+                'timeframes': timeframe_scores
+            })
+            
+            return primary_analysis
 
         except Exception as e:
             logger.error(f"Error analyzing {ticker}: {e}")
