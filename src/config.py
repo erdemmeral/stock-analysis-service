@@ -26,19 +26,22 @@ TIMEFRAME_CONFIGS = {
         'ma_short': 5,      # 1 week
         'ma_long': 20,      # 1 month
         'period': '2mo',    # Changed from '1mo' to '2mo' to ensure enough data points
-        'interval': '1d'    # Daily data
+        'interval': '1d',   # Daily data
+        'weight': 0.3       # 30% weight for combined score
     },
     'medium': {
         'ma_short': 20,     # 1 month
         'ma_long': 50,      # ~2.5 months
         'period': '6mo',    # 6 months of data
-        'interval': '1d'
+        'interval': '1d',
+        'weight': 0.5       # 50% weight for combined score
     },
     'long': {
         'ma_short': 50,     # ~2.5 months
         'ma_long': 100,     # ~5 months
         'period': '1y',     # 1 year of data
-        'interval': '1d'
+        'interval': '1d',
+        'weight': 0.2       # 20% weight for combined score
     }
 }
 

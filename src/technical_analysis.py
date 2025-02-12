@@ -59,16 +59,10 @@ class TechnicalAnalyzer:
             # Add all timeframe scores
             primary_analysis['timeframe_scores'] = timeframe_scores
             
-            # Calculate weighted average score
-            weights = {
-                'short': 0.3,
-                'medium': 0.5,
-                'long': 0.2
-            }
-            
-            total_weight = sum(weights[tf] for tf in timeframe_scores.keys())
+            # Calculate weighted average score using weights from config
+            total_weight = sum(TIMEFRAME_CONFIGS[tf]['weight'] for tf in timeframe_scores.keys())
             weighted_score = sum(
-                timeframe_scores[tf] * weights[tf] 
+                timeframe_scores[tf] * TIMEFRAME_CONFIGS[tf]['weight']
                 for tf in timeframe_scores.keys()
             ) / total_weight if total_weight > 0 else 50
             
@@ -213,7 +207,7 @@ class TechnicalAnalyzer:
         }
 
     def _calculate_volatility(self, hist: pd.DataFrame) -> Dict:
-        """Calculate volatility metrics"""
+        """Calculate volatility metrics with rolling Z-score analysis"""
         returns = hist['Close'].pct_change()
         
         # Daily volatility
@@ -222,18 +216,30 @@ class TechnicalAnalyzer:
         # Annualized volatility
         annual_vol = daily_vol * np.sqrt(252)
         
-        # Volatility trend (increasing/decreasing)
-        recent_vol = returns.tail(self.periods['volatility']).std()
-        prev_vol = returns.iloc[:-self.periods['volatility']].std()
+        # Calculate rolling volatility
+        rolling_vol = returns.rolling(window=self.periods['volatility']).std()
         
-        vol_trend = 'increasing' if recent_vol > prev_vol * 1.1 else \
-                   'decreasing' if recent_vol < prev_vol * 0.9 else \
-                   'stable'
+        # Calculate rolling Z-score for volatility trend detection
+        rolling_mean = rolling_vol.rolling(window=20).mean()
+        rolling_std = rolling_vol.rolling(window=20).std()
+        z_score = (rolling_vol - rolling_mean) / rolling_std
+        
+        # Get recent volatility trend using Z-scores
+        recent_z_score = z_score.iloc[-1]
+        
+        # Determine trend based on statistical significance
+        if recent_z_score > 1.645:  # 90% confidence level
+            vol_trend = 'increasing'
+        elif recent_z_score < -1.645:
+            vol_trend = 'decreasing'
+        else:
+            vol_trend = 'stable'
         
         return {
             'daily': float(daily_vol),
             'annual': float(annual_vol),
             'trend': vol_trend,
+            'z_score': float(recent_z_score),
             'risk_level': 'high' if annual_vol > 0.4 else \
                          'medium' if annual_vol > 0.2 else \
                          'low'
