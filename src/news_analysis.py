@@ -12,11 +12,6 @@ logger = logging.getLogger(__name__)
 class NewsAnalyzer:
     def __init__(self):
         """Initialize FinBERT-tone model and tokenizer"""
-        # Initialize AnalysisService
-        from src.service.analysis_service import AnalysisService
-        self.analysis_service = AnalysisService()
-        
-        # Initialize FinBERT model and tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained("yiyanghkust/finbert-tone")
         self.model = AutoModelForSequenceClassification.from_pretrained("yiyanghkust/finbert-tone")
         self.labels = ['negative', 'neutral', 'positive']
@@ -274,12 +269,6 @@ class NewsAnalyzer:
         """Analyze news for a given stock"""
         try:
             logger.info(f"Starting news analysis for {ticker}")
-            
-            # Ensure analysis service is initialized
-            if not hasattr(self, 'analysis_service'):
-                logger.info("Initializing AnalysisService...")
-                from src.service.analysis_service import AnalysisService
-                self.analysis_service = AnalysisService()
             
             # Get news data
             news_items = self.get_stock_news(ticker)

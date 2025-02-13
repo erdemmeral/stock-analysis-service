@@ -26,7 +26,7 @@ class AnalysisService:
         self.tech_analyzer = TechnicalAnalyzer()
         self.fund_analyzer = FundamentalAnalyzer()
         self.news_analyzer = NewsAnalyzer()
-        # Initialize bot without Application Builder (for v13.x)
+        # Initialize bot for version 13.x
         self.bot = telegram.Bot(token=TELEGRAM_BOT_TOKEN)
         self.last_fundamental_run = None
         
@@ -68,6 +68,7 @@ class AnalysisService:
     async def send_telegram_alert(self, message: str):
         """Send alert to Telegram channel"""
         try:
+            # For python-telegram-bot v13.x
             await self.bot.send_message(
                 chat_id=TELEGRAM_CHANNEL_ID,
                 text=message,
