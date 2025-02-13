@@ -13,58 +13,58 @@ class FundamentalAnalyzer:
         # Basic screening metrics with minimum and ideal thresholds
         self.fundamental_metrics = {
             'debt_to_equity': {
-                'required_max': 2.5,  # Tightened from 3.0
-                'max': 1.8,          # Tightened from 2.0
-                'weight': 1.2
+                'required_max': 2.0,  # Tightened from 2.5
+                'max': 1.5,          # Tightened from 1.8
+                'weight': 1.3        # Increased weight
             },
             'eps_growth_5y': {
-                'required_min': -15,  # Tightened from -20
-                'min': -5,           # Tightened from -10
-                'weight': 1.2        # Increased importance
+                'required_min': -10,  # Tightened from -15
+                'min': 0,            # Tightened from -5
+                'weight': 1.3        # Increased weight
             },
             'gross_margin': {
-                'required_min': 15,   # Increased from 10
-                'min': 25,           # Increased from 20
-                'weight': 1.1
+                'required_min': 20,   # Increased from 15
+                'min': 30,           # Increased from 25
+                'weight': 1.2
             },
             'net_margin': {
-                'required_min': -2,   # Tightened from -5
-                'min': 2,            # Increased from 0
-                'weight': 1.2        # Increased importance
+                'required_min': 0,    # Tightened from -2
+                'min': 5,            # Increased from 2
+                'weight': 1.3        # Increased weight
             },
             'operating_margin': {
-                'required_min': -5,   # Tightened from -10
-                'min': 0,            # Increased from -5
-                'weight': 1.1
+                'required_min': 0,    # Tightened from -5
+                'min': 5,            # Increased from 0
+                'weight': 1.2
             }
         }
         
         # Buffett criteria - tightened but still modern
         self.buffett_metrics = {
             'sga_to_gross_profit': {
-                'required_max': 0.60,  # Tightened from 0.70
-                'max': 0.45,          # Tightened from 0.50
-                'weight': 0.9
+                'required_max': 0.50,  # Tightened from 0.60
+                'max': 0.40,          # Tightened from 0.45
+                'weight': 1.0
             },
             'depreciation_to_gross_profit': {
-                'required_max': 0.25,  # Tightened from 0.30
-                'max': 0.20,
-                'weight': 0.8
+                'required_max': 0.20,  # Tightened from 0.25
+                'max': 0.15,          # Tightened from 0.20
+                'weight': 0.9
             },
             'interest_to_operating_income': {
-                'required_max': 0.35,  # Tightened from 0.40
-                'max': 0.25,          # Tightened from 0.30
-                'weight': 1.0
-            },
-            'debt_coverage': {
-                'required_min': 2.0,   # Increased from 1.5
-                'min': 3.0,           # Increased from 2.5
+                'required_max': 0.30,  # Tightened from 0.35
+                'max': 0.20,          # Tightened from 0.25
                 'weight': 1.1
             },
+            'debt_coverage': {
+                'required_min': 2.5,   # Increased from 2.0
+                'min': 3.5,           # Increased from 3.0
+                'weight': 1.2
+            },
             'leverage_ratio': {
-                'required_max': 2.0,   # Tightened from 2.5
-                'max': 1.5,           # Tightened from 2.0
-                'weight': 1.0
+                'required_max': 1.8,   # Tightened from 2.0
+                'max': 1.3,           # Tightened from 1.5
+                'weight': 1.1
             }
         }
     
@@ -255,11 +255,11 @@ class FundamentalAnalyzer:
             basic_score = sum(scores) / sum(weights) if weights else 0
             buffett_score = sum(buffett_scores) / sum(buffett_weights) if buffett_weights else 50
             
-            # Combined score: 75% basic metrics, 25% Buffett criteria
-            final_score = (basic_score * 0.75) + (buffett_score * 0.25)
+            # Combined score: 80% basic metrics, 20% Buffett criteria (adjusted weights)
+            final_score = (basic_score * 0.80) + (buffett_score * 0.20)
             
             # Stricter passing threshold
-            return final_score if final_score >= 60 else 0  # Increased from 55
+            return final_score if final_score >= 65 else 0  # Increased from 60
             
         except Exception as e:
             logger.error(f"Error calculating fundamental score: {e}")

@@ -144,21 +144,21 @@ class AnalysisService:
                     if current_price is None:
                         try:
                             stock_info = yf.Ticker(ticker).info
-                            current_price = stock_info.get('regularMarketPrice')
+                            current_price = stock_info.get('regularMarketPrice', 0.0)
                         except Exception as e:
                             logger.error(f"Error getting current price for {ticker}: {e}")
                             current_price = 0.0
                     
                     # Log analysis results for debugging
                     logger.info(f"Analysis results for {ticker}:")
-                    logger.info(f"Technical Scores:")
+                    logger.info(f"Technical Score: {tech_analysis['technical_score']['total']:.2f}")
+                    logger.info("Technical Scores by Timeframe:")
                     for tf, score in tech_analysis['technical_score']['timeframes'].items():
                         logger.info(f"  {tf}: {score:.2f}")
-                    logger.info(f"Combined Technical Score: {tech_analysis['technical_score']['total']:.2f}")
                     logger.info(f"News Score: {news_analysis['news_score']}")
                     logger.info(f"Current Price: {current_price}")
                     
-                    # Prepare update data
+                    # Prepare update data with proper type conversion
                     update_data = {
                         'last_analysis': datetime.now().isoformat(),
                         'technical_score': float(tech_analysis['technical_score']['total']),
@@ -173,8 +173,11 @@ class AnalysisService:
                     }
                     
                     # Update watchlist item
-                    success = await self.update_watchlist_item(ticker, update_data)
-                    if not success:
+                    try:
+                        await self.update_watchlist_item(ticker, update_data)
+                        logger.info(f"Successfully updated watchlist item for {ticker}")
+                    except Exception as e:
+                        logger.error(f"Failed to update watchlist item for {ticker}: {e}")
                         continue
                     
                     # Check if we should create a position

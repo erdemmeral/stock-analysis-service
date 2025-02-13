@@ -19,10 +19,12 @@ class Database:
                 CREATE TABLE IF NOT EXISTS watchlist (
                     ticker TEXT PRIMARY KEY,
                     fundamental_score FLOAT,
-                    technical_score FLOAT DEFAULT 50,
-                    news_score FLOAT DEFAULT 50,
-                    news_sentiment TEXT DEFAULT 'neutral',
-                    risk_level TEXT DEFAULT 'medium',
+                    technical_score FLOAT,
+                    technical_scores JSONB DEFAULT '{}',
+                    news_score FLOAT,
+                    news_sentiment TEXT,
+                    risk_level TEXT,
+                    current_price FLOAT,
                     last_updated TIMESTAMP,
                     last_news_check TIMESTAMP,
                     last_technical_check TIMESTAMP
@@ -130,18 +132,85 @@ class Database:
 
     async def update_watchlist_item(self, ticker: str, update_data: Dict):
         """Update a single watchlist item"""
-        async with self.pool.acquire() as conn:
-            await conn.execute("""
-                UPDATE watchlist 
-                SET technical_score = $2,
-                    news_score = $3,
-                    news_sentiment = $4,
-                    risk_level = $5,
-                    last_updated = $6
-                WHERE ticker = $1
-            """, ticker, 
-                update_data.get('technical_score', 50),
-                update_data.get('news_score', 50),
-                update_data.get('news_sentiment', 'neutral'),
-                update_data.get('risk_level', 'medium'),
-                datetime.now()) 
+        try:
+            async with self.pool.acquire() as conn:
+                # First check if item exists
+                exists = await conn.fetchval(
+                    "SELECT EXISTS(SELECT 1 FROM watchlist WHERE ticker = $1)",
+                    ticker
+                )
+                
+                if not exists:
+                    # Insert new item if it doesn't exist
+                    await conn.execute("""
+                        INSERT INTO watchlist (
+                            ticker,
+                            technical_score,
+                            technical_scores,
+                            news_score,
+                            news_sentiment,
+                            risk_level,
+                            current_price,
+                            last_updated,
+                            last_news_check,
+                            last_technical_check
+                        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    """, 
+                        ticker,
+                        float(update_data.get('technical_score', 50.0)),
+                        update_data.get('technical_scores', {}),
+                        float(update_data.get('news_score', 50.0)),
+                        update_data.get('news_sentiment', 'neutral'),
+                        update_data.get('risk_level', 'medium'),
+                        float(update_data.get('current_price', 0.0)),
+                        datetime.now(),
+                        datetime.now(),
+                        datetime.now()
+                    )
+                else:
+                    # Prepare update data with proper type conversion
+                    tech_score = update_data.get('technical_score')
+                    news_score = update_data.get('news_score')
+                    current_price = update_data.get('current_price')
+                    
+                    # Convert scores to float if they exist
+                    if tech_score is not None:
+                        tech_score = float(tech_score)
+                    if news_score is not None:
+                        news_score = float(news_score)
+                    if current_price is not None:
+                        current_price = float(current_price)
+                    
+                    # Update existing item
+                    await conn.execute("""
+                        UPDATE watchlist 
+                        SET technical_score = COALESCE($2, technical_score),
+                            technical_scores = COALESCE($3, technical_scores),
+                            news_score = COALESCE($4, news_score),
+                            news_sentiment = COALESCE($5, news_sentiment),
+                            risk_level = COALESCE($6, risk_level),
+                            current_price = COALESCE($7, current_price),
+                            last_updated = $8,
+                            last_news_check = CASE 
+                                WHEN $4 IS NOT NULL THEN $8 
+                                ELSE last_news_check 
+                            END,
+                            last_technical_check = CASE 
+                                WHEN $2 IS NOT NULL THEN $8 
+                                ELSE last_technical_check 
+                            END
+                        WHERE ticker = $1
+                    """, 
+                        ticker,
+                        tech_score,
+                        update_data.get('technical_scores', None),
+                        news_score,
+                        update_data.get('news_sentiment'),
+                        update_data.get('risk_level'),
+                        current_price,
+                        datetime.now()
+                    )
+                logger.info(f"Successfully updated watchlist item for {ticker} with scores: tech={tech_score}, news={news_score}")
+        except Exception as e:
+            logger.error(f"Error updating watchlist item for {ticker}: {e}")
+            raise 
