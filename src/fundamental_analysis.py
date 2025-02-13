@@ -396,6 +396,21 @@ class FundamentalAnalyzer:
         
         return self.score_fundamentals(minimum_data) 
 
+    async def process_stock(self, ticker: str, watchlist_data: dict) -> None:
+        """Process a single stock by adding it to watchlist and running analysis"""
+        try:
+            # Add to watchlist first
+            watchlist_result = await self.analysis_service.add_to_watchlist(ticker, watchlist_data)
+            if watchlist_result:
+                logger.info(f"Added {ticker} to watchlist, starting analysis")
+                # Only proceed with analysis if watchlist addition was successful
+                await self.analysis_service.analyze_single_stock(ticker)
+                logger.info(f"Completed analysis for {ticker}")
+            else:
+                logger.error(f"Failed to add {ticker} to watchlist, skipping analysis")
+        except Exception as e:
+            logger.error(f"Error processing {ticker}: {e}")
+
     async def analyze_stocks(self):
         """Analyze stocks from stock_tickers.txt"""
         try:
@@ -435,45 +450,19 @@ class FundamentalAnalyzer:
                             results.append(stock_result)
                             raw_data.append(analysis)
                             
-                            # Create tasks for stocks that meet criteria
-                            try:
-                                if not hasattr(self, 'analysis_service'):
-                                    logger.info("Initializing AnalysisService...")
-                                    from src.service.analysis_service import AnalysisService
-                                    self.analysis_service = AnalysisService()
-                                
-                                # Create watchlist data
-                                watchlist_data = {
-                                    'ticker': ticker,
-                                    'fundamental_score': analysis['score'],
-                                    'status': 'new',
-                                    'added_date': datetime.now().isoformat()
-                                }
-                                
-                                # Create a single task that handles both watchlist and analysis
-                                async def process_stock(t, data):
-                                    try:
-                                        # Add to watchlist first
-                                        watchlist_result = await self.analysis_service.add_to_watchlist(t, data)
-                                        if watchlist_result:
-                                            logger.info(f"Added {t} to watchlist, starting analysis")
-                                            # Only proceed with analysis if watchlist addition was successful
-                                            await self.analysis_service.analyze_single_stock(t)
-                                            logger.info(f"Completed analysis for {t}")
-                                        else:
-                                            logger.error(f"Failed to add {t} to watchlist, skipping analysis")
-                                    except Exception as e:
-                                        logger.error(f"Error processing {t}: {e}")
-                                
-                                # Create and add the task
-                                task = asyncio.create_task(process_stock(ticker, watchlist_data))
-                                task.set_name(f"process_{ticker}")
-                                tasks.append(task)
-                                logger.info(f"Created processing task for {ticker}")
-                                
-                            except Exception as e:
-                                logger.error(f"Error creating tasks for {ticker}: {e}")
-                                continue
+                            # Create watchlist data and task for stocks that meet criteria
+                            watchlist_data = {
+                                'ticker': ticker,
+                                'fundamental_score': analysis['score'],
+                                'status': 'new',
+                                'added_date': datetime.now().isoformat()
+                            }
+                            
+                            # Create and add the task
+                            task = asyncio.create_task(self.process_stock(ticker, watchlist_data))
+                            task.set_name(f"process_{ticker}")
+                            tasks.append(task)
+                            logger.info(f"Created processing task for {ticker}")
                                 
                         else:
                             logger.info(f"{ticker} did not meet criteria: {analysis.get('status')}")
