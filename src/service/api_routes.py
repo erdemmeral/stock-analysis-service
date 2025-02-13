@@ -1,11 +1,11 @@
 from fastapi import APIRouter, HTTPException
 from datetime import datetime
-from src.service.technical_analyzer import TechnicalAnalyzer
-from src.service.news_analyzer import NewsAnalyzer
-from src.models.schemas import WatchlistUpdate
+from ..technical_analysis import TechnicalAnalyzer
+from ..news_analysis import NewsAnalyzer
+from ..models.schemas import WatchlistUpdate
 import yfinance as yf
 import aiohttp
-from src.config import PORTFOLIO_API_URL
+from ..config import PORTFOLIO_API_URL
 
 router = APIRouter()
 

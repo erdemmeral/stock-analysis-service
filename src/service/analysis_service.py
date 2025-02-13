@@ -310,11 +310,15 @@ class AnalysisService:
     async def handle_portfolio_addition(self, ticker: str, score: float, tech_analysis: Dict, news_analysis: Dict):
         """Handle adding a position to the portfolio"""
         try:
+            # Determine best timeframe based on scores
+            timeframe_scores = tech_analysis['technical_score']['timeframes']
+            best_timeframe = max(timeframe_scores.items(), key=lambda x: x[1])[0]
+            
             # Prepare position data
             position_data = {
                 'ticker': ticker,
                 'entry_price': tech_analysis['signals']['current_price'],
-                'timeframe': 'medium',  # Default to medium timeframe
+                'timeframe': best_timeframe,  # Use best performing timeframe
                 'technical_score': tech_analysis['technical_score']['total'],
                 'news_score': news_analysis['news_score'],
                 'support_levels': tech_analysis['support_resistance']['support'],
