@@ -390,16 +390,24 @@ class AnalysisService:
     ):
         """Handle removing stock from portfolio"""
         try:
-            # Get entry data
-            entry_data = await self.db.get_portfolio_entry(ticker)
+            # Get entry data from API
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f'{PORTFOLIO_API_URL}/positions/{ticker}') as response:
+                    if response.status != 200:
+                        raise Exception(f"Failed to get position data: {response.status}")
+                    entry_data = await response.json()
+            
             entry_price = entry_data['entry_price']
             current_price = tech_analysis['signals']['current_price']
             
             # Calculate return
             returns_pct = ((current_price - entry_price) / entry_price) * 100
             
-            # Remove from portfolio
-            await self.db.remove_from_portfolio(ticker)
+            # Remove from portfolio using API
+            async with aiohttp.ClientSession() as session:
+                async with session.delete(f'{PORTFOLIO_API_URL}/positions/{ticker}') as response:
+                    if response.status not in (200, 204):
+                        raise Exception(f"Failed to remove position: {response.status}")
             
             # Send notification
             message = (
@@ -418,13 +426,19 @@ class AnalysisService:
             logger.error(f"Error removing {ticker} from portfolio: {e}")
 
     async def store_analysis(self, ticker: str, analysis: Dict):
-        """Store analysis results in database"""
+        """Store analysis results using API"""
         try:
-            await self.db.store_analysis_result(
-                ticker=ticker,
-                timestamp=datetime.now(),
-                analysis_data=analysis
-            )
+            async with aiohttp.ClientSession() as session:
+                async with session.post(
+                    f'{PORTFOLIO_API_URL}/analysis',
+                    json={
+                        'ticker': ticker,
+                        'timestamp': datetime.now().isoformat(),
+                        'analysis_data': analysis
+                    }
+                ) as response:
+                    if response.status not in (200, 201):
+                        logger.error(f"Failed to store analysis: {response.status}")
         except Exception as e:
             logger.error(f"Error storing analysis for {ticker}: {e}")
 
@@ -861,3 +875,87 @@ class AnalysisService:
         except Exception as e:
             logger.error(f"API error for {ticker}: {e}")
             return False
+
+    async def analyze_single_stock(self, ticker: str):
+        """Analyze a single stock immediately after passing fundamental criteria"""
+        try:
+            logger.info(f"Running immediate analysis for {ticker}")
+            
+            # Run technical analysis with retries
+            retry_count = 0
+            max_retries = 3
+            tech_analysis = None
+            
+            while retry_count < max_retries:
+                try:
+                    tech_analysis = self.tech_analyzer.analyze_stock(ticker)
+                    if tech_analysis and 'technical_score' in tech_analysis:
+                        break
+                except Exception as e:
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        logger.warning(f"Retry {retry_count} technical analysis for {ticker}: {e}")
+                        await asyncio.sleep(5)
+                    else:
+                        logger.error(f"Failed technical analysis for {ticker} after {max_retries} attempts: {e}")
+                        return
+            
+            # Run news analysis with retries
+            retry_count = 0
+            news_analysis = None
+            
+            while retry_count < max_retries:
+                try:
+                    news_analysis = self.news_analyzer.analyze_stock_news(ticker)
+                    if news_analysis and 'news_score' in news_analysis:
+                        break
+                except Exception as e:
+                    retry_count += 1
+                    if retry_count < max_retries:
+                        logger.warning(f"Retry {retry_count} news analysis for {ticker}: {e}")
+                        await asyncio.sleep(5)
+                    else:
+                        logger.error(f"Failed news analysis for {ticker} after {max_retries} attempts: {e}")
+                        return
+            
+            if tech_analysis and news_analysis:
+                # Get current price
+                current_price = tech_analysis.get('signals', {}).get('current_price')
+                if current_price is None:
+                    try:
+                        stock_info = yf.Ticker(ticker).info
+                        current_price = stock_info.get('regularMarketPrice', 0.0)
+                    except Exception as e:
+                        logger.error(f"Error getting current price for {ticker}: {e}")
+                        current_price = 0.0
+                
+                # Prepare update data
+                update_data = {
+                    'last_analysis': datetime.now().isoformat(),
+                    'technical_score': float(tech_analysis['technical_score']['total']),
+                    'technical_scores': {
+                        tf: float(score) 
+                        for tf, score in tech_analysis['technical_score']['timeframes'].items()
+                    },
+                    'news_score': float(news_analysis['news_score']),
+                    'news_sentiment': news_analysis['sentiment'],
+                    'risk_level': tech_analysis['signals']['volatility']['risk_level'],
+                    'current_price': float(current_price) if current_price else 0.0
+                }
+                
+                # Update watchlist item
+                await self.update_watchlist_item(ticker, update_data)
+                
+                # Check if we should create a position
+                if self.should_create_position(tech_analysis, news_analysis):
+                    await self.handle_portfolio_addition(
+                        ticker,
+                        tech_analysis['technical_score']['total'],
+                        tech_analysis,
+                        news_analysis
+                    )
+                
+                logger.info(f"Completed immediate analysis for {ticker}")
+            
+        except Exception as e:
+            logger.error(f"Error in immediate analysis for {ticker}: {e}")

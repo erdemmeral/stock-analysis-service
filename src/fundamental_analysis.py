@@ -421,13 +421,31 @@ class FundamentalAnalyzer:
                         
                         if analysis['meets_criteria']:
                             logger.info(f"{ticker} met criteria with score {analysis['score']}")
-                            results.append({
+                            stock_result = {
                                 'ticker': ticker,
                                 'score': analysis['score']
-                            })
+                            }
+                            results.append(stock_result)
+                            raw_data.append(analysis)
+                            
+                            # Trigger immediate analysis for this stock
+                            try:
+                                # Use asyncio.create_task to run in background
+                                import asyncio
+                                from src.service.analysis_service import AnalysisService
+                                
+                                async def analyze_passing_stock():
+                                    service = AnalysisService()
+                                    await service.analyze_single_stock(ticker)
+                                
+                                # Run in background without waiting
+                                asyncio.create_task(analyze_passing_stock())
+                                logger.info(f"Triggered immediate analysis for {ticker}")
+                            except Exception as e:
+                                logger.error(f"Error triggering immediate analysis for {ticker}: {e}")
                         else:
                             logger.info(f"{ticker} did not meet criteria: {analysis.get('status')}")
-                        raw_data.append(analysis)
+                            raw_data.append(analysis)
                     except Exception as e:
                         logger.error(f"Error analyzing {ticker}: {e}")
                         continue

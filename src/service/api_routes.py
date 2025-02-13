@@ -3,8 +3,9 @@ from datetime import datetime
 from src.service.technical_analyzer import TechnicalAnalyzer
 from src.service.news_analyzer import NewsAnalyzer
 from src.models.schemas import WatchlistUpdate
-from src.database.database import db
 import yfinance as yf
+import aiohttp
+from src.config import PORTFOLIO_API_URL
 
 router = APIRouter()
 
@@ -76,15 +77,17 @@ async def update_watchlist_item(ticker: str, update_data: WatchlistUpdate):
             "current_price": update_data.current_price
         }
         
-        # Update database
-        result = await db.watchlist.update_one(
-            {"ticker": ticker},
-            {"$set": watchlist_data}
-        )
-        
-        if result.modified_count == 0:
-            raise HTTPException(status_code=404, detail="Watchlist item not found")
-            
+        # Update using Portfolio API
+        async with aiohttp.ClientSession() as session:
+            async with session.patch(
+                f"{PORTFOLIO_API_URL}/watchlist/{ticker}",
+                json=watchlist_data
+            ) as response:
+                if response.status == 404:
+                    raise HTTPException(status_code=404, detail="Watchlist item not found")
+                elif response.status != 200:
+                    raise HTTPException(status_code=response.status, detail="Failed to update watchlist item")
+                
         return {"status": "success", "message": "Watchlist item updated"}
         
     except Exception as e:
