@@ -427,7 +427,6 @@ class FundamentalAnalyzer:
             
             results = []
             raw_data = []
-            tasks = []  # List to store async tasks
             
             # Process in batches
             batch_size = 30
@@ -449,21 +448,6 @@ class FundamentalAnalyzer:
                             }
                             results.append(stock_result)
                             raw_data.append(analysis)
-                            
-                            # Create watchlist data and task for stocks that meet criteria
-                            watchlist_data = {
-                                'ticker': ticker,
-                                'fundamental_score': analysis['score'],
-                                'status': 'new',
-                                'added_date': datetime.now().isoformat()
-                            }
-                            
-                            # Create and add the task
-                            task = asyncio.create_task(self.process_stock(ticker, watchlist_data))
-                            task.set_name(f"process_{ticker}")
-                            tasks.append(task)
-                            logger.info(f"Created processing task for {ticker}")
-                                
                         else:
                             logger.info(f"{ticker} did not meet criteria: {analysis.get('status')}")
                             raw_data.append(analysis)
@@ -471,56 +455,49 @@ class FundamentalAnalyzer:
                         logger.error(f"Error analyzing {ticker}: {e}")
                         continue
                 
-                # Sleep between batches (except after the last batch)
+                # Sleep between batches to prevent rate limiting
                 if i + batch_size < len(tickers):
-                    logger.info("Processing pending tasks and sleeping between batches...")
-                    try:
-                        # Wait for current batch of tasks with timeout
-                        batch_tasks = tasks[-len(batch):]  # Get tasks from current batch
-                        if batch_tasks:
-                            logger.info(f"Waiting for {len(batch_tasks)} tasks from current batch...")
-                            batch_completed = await asyncio.wait(
-                                batch_tasks,
-                                timeout=45  # Use the sleep time as timeout
+                    await asyncio.sleep(5)
+            
+            # After all fundamental analysis is complete, process stocks that met criteria
+            if results:
+                logger.info(f"Processing {len(results)} stocks that met fundamental criteria")
+                try:
+                    if not hasattr(self, 'analysis_service'):
+                        from src.service.analysis_service import AnalysisService
+                        self.analysis_service = AnalysisService()
+                    
+                    for stock in results:
+                        try:
+                            # Add to watchlist
+                            watchlist_data = {
+                                'ticker': stock['ticker'],
+                                'fundamental_score': stock['score'],
+                                'status': 'new',
+                                'added_date': datetime.now().isoformat()
+                            }
+                            
+                            # Sequential processing for each stock
+                            watchlist_result = await self.analysis_service.add_to_watchlist(
+                                stock['ticker'], 
+                                watchlist_data
                             )
                             
-                            # Check results
-                            done, pending = batch_completed
-                            for task in done:
-                                try:
-                                    result = task.result()
-                                    if isinstance(result, Exception):
-                                        logger.error(f"Task failed with error: {result}")
-                                except Exception as e:
-                                    logger.error(f"Error getting task result: {e}")
+                            if watchlist_result:
+                                logger.info(f"Added {stock['ticker']} to watchlist, starting analysis")
+                                await self.analysis_service.analyze_single_stock(stock['ticker'])
+                                logger.info(f"Completed analysis for {stock['ticker']}")
+                                # Sleep briefly between stocks
+                                await asyncio.sleep(1)
+                            else:
+                                logger.error(f"Failed to add {stock['ticker']} to watchlist")
+                                
+                        except Exception as e:
+                            logger.error(f"Error processing {stock['ticker']}: {e}")
+                            continue
                             
-                            # Cancel any pending tasks from this batch
-                            for task in pending:
-                                task.cancel()
-                                logger.warning(f"Cancelled pending task after timeout")
-                    except Exception as e:
-                        logger.error(f"Error processing batch tasks: {e}")
-                    
-                    # Sleep any remaining time if tasks finished early
-                    await asyncio.sleep(5)  # Minimum sleep to prevent rate limiting
-            
-            # Wait for all tasks to complete with proper error handling
-            if tasks:
-                try:
-                    logger.info(f"Waiting for {len(tasks)} tasks to complete...")
-                    loop = asyncio.get_event_loop()
-                    completed_tasks = await asyncio.gather(*tasks, return_exceptions=True)
-                    
-                    # Check for any errors in completed tasks
-                    for i, result in enumerate(completed_tasks):
-                        if isinstance(result, Exception):
-                            logger.error(f"Task {i} failed with error: {result}")
-                        elif isinstance(result, bool) and not result:
-                            logger.error(f"Task {i} completed but returned False")
-                    
-                    logger.info("All tasks completed")
                 except Exception as e:
-                    logger.error(f"Error waiting for tasks to complete: {e}")
+                    logger.error(f"Error in post-fundamental analysis: {e}")
             
             logger.info(f"Fundamental analysis complete. {len(results)} stocks met criteria")
             if results:
