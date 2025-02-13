@@ -19,14 +19,24 @@ class Database:
                 CREATE TABLE IF NOT EXISTS watchlist (
                     ticker TEXT PRIMARY KEY,
                     fundamental_score FLOAT,
-                    last_updated TIMESTAMP
+                    technical_score FLOAT DEFAULT 50,
+                    news_score FLOAT DEFAULT 50,
+                    news_sentiment TEXT DEFAULT 'neutral',
+                    risk_level TEXT DEFAULT 'medium',
+                    last_updated TIMESTAMP,
+                    last_news_check TIMESTAMP,
+                    last_technical_check TIMESTAMP
                 );
                 
                 CREATE TABLE IF NOT EXISTS portfolio (
                     ticker TEXT PRIMARY KEY,
                     entry_price FLOAT,
+                    current_price FLOAT,
                     entry_date TIMESTAMP,
                     combined_score FLOAT,
+                    fundamental_score FLOAT,
+                    technical_score FLOAT,
+                    news_score FLOAT,
                     analysis JSONB
                 );
                 
@@ -37,7 +47,8 @@ class Database:
                     technical_score FLOAT,
                     news_score FLOAT,
                     combined_score FLOAT,
-                    analysis_data JSONB
+                    analysis_data JSONB,
+                    PRIMARY KEY (ticker, timestamp)
                 );
             """)
 
@@ -45,13 +56,33 @@ class Database:
         """Update watchlist with fundamental analysis results"""
         async with self.pool.acquire() as conn:
             await conn.executemany("""
-                INSERT INTO watchlist (ticker, fundamental_score, last_updated)
-                VALUES ($1, $2, $3)
+                INSERT INTO watchlist (
+                    ticker, 
+                    fundamental_score, 
+                    technical_score,
+                    news_score,
+                    news_sentiment,
+                    risk_level,
+                    last_updated
+                )
+                VALUES ($1, $2, $3, $4, $5, $6, $7)
                 ON CONFLICT (ticker) 
                 DO UPDATE SET 
                     fundamental_score = EXCLUDED.fundamental_score,
+                    technical_score = EXCLUDED.technical_score,
+                    news_score = EXCLUDED.news_score,
+                    news_sentiment = EXCLUDED.news_sentiment,
+                    risk_level = EXCLUDED.risk_level,
                     last_updated = EXCLUDED.last_updated
-            """, [(s['ticker'], s['score'], datetime.now()) for s in stocks])
+            """, [(
+                s['ticker'], 
+                s['score'],
+                s.get('technical_score', 50),
+                s.get('news_score', 50),
+                s.get('news_sentiment', 'neutral'),
+                s.get('risk_level', 'medium'),
+                datetime.now()
+            ) for s in stocks])
 
     async def get_watchlist(self) -> List[str]:
         """Get current watchlist tickers"""
@@ -95,4 +126,22 @@ class Database:
                 VALUES ($1, $2, $3, $4, $5, $6, $7)
             """, ticker, timestamp, analysis_data['fundamental_score'],
                 analysis_data['technical_score'], analysis_data['news_score'],
-                analysis_data['combined_score'], analysis_data) 
+                analysis_data['combined_score'], analysis_data)
+
+    async def update_watchlist_item(self, ticker: str, update_data: Dict):
+        """Update a single watchlist item"""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                UPDATE watchlist 
+                SET technical_score = $2,
+                    news_score = $3,
+                    news_sentiment = $4,
+                    risk_level = $5,
+                    last_updated = $6
+                WHERE ticker = $1
+            """, ticker, 
+                update_data.get('technical_score', 50),
+                update_data.get('news_score', 50),
+                update_data.get('news_sentiment', 'neutral'),
+                update_data.get('risk_level', 'medium'),
+                datetime.now()) 

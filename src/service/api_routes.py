@@ -4,6 +4,7 @@ from src.service.technical_analyzer import TechnicalAnalyzer
 from src.service.news_analyzer import NewsAnalyzer
 from src.models.schemas import WatchlistUpdate
 from src.database.database import db
+import yfinance as yf
 
 router = APIRouter()
 
@@ -17,6 +18,15 @@ async def get_analysis(ticker: str):
         # Get analyses
         tech_analysis = tech_analyzer.analyze_stock(ticker)
         news_analysis = news_analyzer.analyze_stock_news(ticker)
+        
+        # Get current price
+        current_price = tech_analysis.get('signals', {}).get('current_price')
+        if current_price is None:
+            try:
+                stock_info = yf.Ticker(ticker).info
+                current_price = stock_info.get('regularMarketPrice', 0.0)
+            except:
+                current_price = 0.0
         
         return {
             "ticker": ticker,
@@ -43,10 +53,11 @@ async def get_analysis(ticker: str):
                 "sentiment": news_analysis['sentiment'],
                 "confidence": news_analysis['confidence'],
                 "article_count": news_analysis['article_count'],
-                "recent_articles": news_analysis['items']
+                "items": news_analysis['items']
             },
-            "timestamp": datetime.now().isoformat()
+            "current_price": current_price
         }
+        
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -61,7 +72,8 @@ async def update_watchlist_item(ticker: str, update_data: WatchlistUpdate):
             "technical_scores": update_data.technical_scores,  # New field for timeframe scores
             "news_score": update_data.news_score,
             "news_sentiment": update_data.news_sentiment,
-            "risk_level": update_data.risk_level
+            "risk_level": update_data.risk_level,
+            "current_price": update_data.current_price
         }
         
         # Update database

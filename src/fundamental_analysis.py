@@ -13,58 +13,58 @@ class FundamentalAnalyzer:
         # Basic screening metrics with minimum and ideal thresholds
         self.fundamental_metrics = {
             'debt_to_equity': {
-                'required_max': 3.0,  # Increased - accommodates financial/utility/real estate sectors
-                'max': 2.0,          # Adjusted ideal maximum
-                'weight': 1.2        # Increased weight for leverage metric
+                'required_max': 2.5,  # Tightened from 3.0
+                'max': 1.8,          # Tightened from 2.0
+                'weight': 1.2
             },
             'eps_growth_5y': {
-                'required_min': -20,  # More lenient for cyclical/commodity industries
-                'min': -10,          # Adjusted ideal minimum
-                'weight': 1.0
+                'required_min': -15,  # Tightened from -20
+                'min': -5,           # Tightened from -10
+                'weight': 1.2        # Increased importance
             },
             'gross_margin': {
-                'required_min': 10,   # Lowered - accommodates retail/distribution/commodity
-                'min': 20,           # Adjusted ideal minimum
-                'weight': 1.1        # Increased weight for profitability
+                'required_min': 15,   # Increased from 10
+                'min': 25,           # Increased from 20
+                'weight': 1.1
             },
             'net_margin': {
-                'required_min': -5,   # Allow some losses for growth companies
-                'min': 0,            # Adjusted ideal minimum
-                'weight': 1.1        # Increased weight for profitability
+                'required_min': -2,   # Tightened from -5
+                'min': 2,            # Increased from 0
+                'weight': 1.2        # Increased importance
             },
             'operating_margin': {
-                'required_min': -10,   # More lenient for growth/tech companies
-                'min': -5,           # Adjusted ideal minimum
-                'weight': 1.0
+                'required_min': -5,   # Tightened from -10
+                'min': 0,            # Increased from -5
+                'weight': 1.1
             }
         }
         
-        # Buffett criteria with required and ideal thresholds - adjusted for modern business models
+        # Buffett criteria - tightened but still modern
         self.buffett_metrics = {
             'sga_to_gross_profit': {
-                'required_max': 0.70,  # Further increased for tech/service companies
-                'max': 0.50,          # Adjusted ideal maximum
-                'weight': 0.8         # Reduced weight
-            },
-            'depreciation_to_gross_profit': {
-                'required_max': 0.30,  # Increased for capital-intensive industries
-                'max': 0.25,          # Adjusted ideal maximum
-                'weight': 0.7         # Reduced weight
-            },
-            'interest_to_operating_income': {
-                'required_max': 0.40,  # Increased for financial/real estate sectors
-                'max': 0.30,          # Adjusted ideal maximum
+                'required_max': 0.60,  # Tightened from 0.70
+                'max': 0.45,          # Tightened from 0.50
                 'weight': 0.9
             },
-            'debt_coverage': {
-                'required_min': 1.5,   # Further lowered for current market conditions
-                'min': 2.5,           # Adjusted ideal minimum
+            'depreciation_to_gross_profit': {
+                'required_max': 0.25,  # Tightened from 0.30
+                'max': 0.20,
+                'weight': 0.8
+            },
+            'interest_to_operating_income': {
+                'required_max': 0.35,  # Tightened from 0.40
+                'max': 0.25,          # Tightened from 0.30
                 'weight': 1.0
             },
+            'debt_coverage': {
+                'required_min': 2.0,   # Increased from 1.5
+                'min': 3.0,           # Increased from 2.5
+                'weight': 1.1
+            },
             'leverage_ratio': {
-                'required_max': 2.5,   # Increased for financial sector
-                'max': 2.0,           # Adjusted ideal maximum
-                'weight': 0.8         # Reduced weight
+                'required_max': 2.0,   # Tightened from 2.5
+                'max': 1.5,           # Tightened from 2.0
+                'weight': 1.0
             }
         }
     
@@ -183,10 +183,14 @@ class FundamentalAnalyzer:
         return data
     
     def score_fundamentals(self, data: Dict) -> float:
-        """Calculate fundamental score with more balanced criteria"""
+        """Calculate fundamental score with balanced criteria"""
         try:
-            # Check minimum criteria with more flexibility
+            # Check minimum criteria
             if not self.meets_minimum_criteria(data):
+                return 0
+            
+            # Require minimum data quality
+            if sum(1 for metric, value in data.items() if value is not None) < 4:
                 return 0
             
             scores = []
@@ -194,74 +198,68 @@ class FundamentalAnalyzer:
             
             # Score each fundamental metric
             for metric, criteria in self.fundamental_metrics.items():
-                if metric == 'country':  # Skip non-numeric criteria
-                    continue
-                    
                 value = data.get(metric)
                 if value is None:
-                    continue  # Skip missing metrics instead of failing
+                    continue
                 
-                # Get thresholds
                 min_val = criteria.get('required_min', criteria.get('min', float('-inf')))
                 max_val = criteria.get('required_max', criteria.get('max', float('inf')))
                 target_min = criteria.get('min', min_val)
                 target_max = criteria.get('max', max_val)
                 weight = criteria['weight']
                 
-                # Calculate score - more balanced scoring
+                # Calculate score - stricter scoring
                 if value < min_val or value > max_val:
-                    score = 30  # Reduced penalty for missing criteria
+                    score = 25  # Increased penalty
                 elif target_min <= value <= target_max:
-                    score = 100  # Meets ideal criteria
+                    score = 100
                 else:
                     # Scale score based on how close to ideal range
                     if value < target_min:
-                        score = 50 + (50 * (value - min_val) / (target_min - min_val))
-                    else:  # value > target_max
-                        score = 50 + (50 * (max_val - value) / (max_val - target_max))
+                        score = 40 + (60 * (value - min_val) / (target_min - min_val))
+                    else:
+                        score = 40 + (60 * (max_val - value) / (max_val - target_max))
                 
                 scores.append(score * weight)
                 weights.append(weight)
             
-            # Score Buffett criteria with more flexibility
+            # Score Buffett criteria
             buffett_scores = []
             buffett_weights = []
             
             for metric, criteria in self.buffett_metrics.items():
                 value = data.get(metric)
                 if value is None:
-                    continue  # Skip missing Buffett metrics
-                    
+                    continue
+                
                 min_val = criteria.get('required_min', criteria.get('min', float('-inf')))
                 max_val = criteria.get('required_max', criteria.get('max', float('inf')))
                 target_min = criteria.get('min', min_val)
                 target_max = criteria.get('max', max_val)
                 weight = criteria['weight']
                 
-                # Calculate score - more balanced scoring
                 if value < min_val or value > max_val:
-                    score = 30  # Reduced penalty for missing criteria
+                    score = 25  # Increased penalty
                 elif target_min <= value <= target_max:
                     score = 100
                 else:
-                    # Scale score based on how close to ideal range
                     if value < target_min:
-                        score = 50 + (50 * (value - min_val) / (target_min - min_val))
+                        score = 40 + (60 * (value - min_val) / (target_min - min_val))
                     else:
-                        score = 50 + (50 * (max_val - value) / (max_val - target_max))
+                        score = 40 + (60 * (max_val - value) / (max_val - target_max))
                 
                 buffett_scores.append(score * weight)
                 buffett_weights.append(weight)
             
-            # Calculate final score with separate weights for basic and Buffett criteria
+            # Calculate final score
             basic_score = sum(scores) / sum(weights) if weights else 0
             buffett_score = sum(buffett_scores) / sum(buffett_weights) if buffett_weights else 50
             
-            # Combined score: 70% basic metrics, 30% Buffett criteria
-            final_score = (basic_score * 0.7) + (buffett_score * 0.3)
+            # Combined score: 75% basic metrics, 25% Buffett criteria
+            final_score = (basic_score * 0.75) + (buffett_score * 0.25)
             
-            # More lenient passing threshold
-            return final_score if final_score >= 55 else 0  # Lowered to 55%
+            # Stricter passing threshold
+            return final_score if final_score >= 60 else 0  # Increased from 55
             
         except Exception as e:
             logger.error(f"Error calculating fundamental score: {e}")
@@ -269,9 +267,14 @@ class FundamentalAnalyzer:
 
     def meets_minimum_criteria(self, data: Dict) -> bool:
         """
-        Checks if stock meets minimum required criteria with more flexibility
+        Checks if stock meets minimum required criteria with balanced flexibility
         """
         try:
+            # Require minimum number of metrics to be present
+            available_metrics = sum(1 for metric, value in data.items() if value is not None)
+            if available_metrics < 4:  # At least 4 basic metrics must be present
+                return False
+            
             # Count how many metrics pass minimum criteria
             passed_metrics = 0
             total_metrics = 0
@@ -280,7 +283,7 @@ class FundamentalAnalyzer:
             for metric, criteria in self.fundamental_metrics.items():
                 value = data.get(metric)
                 if value is None:
-                    continue  # Skip missing metrics
+                    continue
                 
                 total_metrics += 1
                 
@@ -291,7 +294,7 @@ class FundamentalAnalyzer:
                     
                 passed_metrics += 1
             
-            # Check Buffett criteria with more flexibility
+            # Check Buffett criteria
             buffett_passed = 0
             buffett_total = 0
             
@@ -309,14 +312,14 @@ class FundamentalAnalyzer:
                     
                 buffett_passed += 1
             
-            # Require at least 50% of available metrics to pass (lowered from 60%)
+            # Require at least 55% of available metrics to pass
             basic_ratio = passed_metrics / total_metrics if total_metrics > 0 else 0
             buffett_ratio = buffett_passed / buffett_total if buffett_total > 0 else 0
             
-            # Weight the ratios (80% basic, 20% Buffett) - increased basic weight
-            final_ratio = (basic_ratio * 0.8) + (buffett_ratio * 0.2)
+            # Weight the ratios (75% basic, 25% Buffett)
+            final_ratio = (basic_ratio * 0.75) + (buffett_ratio * 0.25)
             
-            return final_ratio >= 0.5  # Lowered to 50% from 60%
+            return final_ratio >= 0.55  # Increased from 0.50
             
         except Exception as e:
             logger.error(f"Error checking criteria: {e}")

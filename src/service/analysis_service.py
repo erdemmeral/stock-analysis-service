@@ -17,6 +17,7 @@ from ..config import (
     PROFIT_TARGETS,
     TRAILING_STOP
 )
+import yfinance as yf
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +139,16 @@ class AnalysisService:
                         logger.error(f"Invalid news analysis for {ticker}")
                         continue
                     
+                    # Get current price
+                    current_price = tech_analysis.get('signals', {}).get('current_price')
+                    if current_price is None:
+                        try:
+                            stock_info = yf.Ticker(ticker).info
+                            current_price = stock_info.get('regularMarketPrice')
+                        except Exception as e:
+                            logger.error(f"Error getting current price for {ticker}: {e}")
+                            current_price = 0.0
+                    
                     # Log analysis results for debugging
                     logger.info(f"Analysis results for {ticker}:")
                     logger.info(f"Technical Scores:")
@@ -145,6 +156,7 @@ class AnalysisService:
                         logger.info(f"  {tf}: {score:.2f}")
                     logger.info(f"Combined Technical Score: {tech_analysis['technical_score']['total']:.2f}")
                     logger.info(f"News Score: {news_analysis['news_score']}")
+                    logger.info(f"Current Price: {current_price}")
                     
                     # Prepare update data
                     update_data = {
@@ -156,7 +168,8 @@ class AnalysisService:
                         },
                         'news_score': float(news_analysis['news_score']),
                         'news_sentiment': news_analysis['sentiment'],
-                        'risk_level': tech_analysis['signals']['volatility']['risk_level']
+                        'risk_level': tech_analysis['signals']['volatility']['risk_level'],
+                        'current_price': float(current_price) if current_price else 0.0
                     }
                     
                     # Update watchlist item
@@ -790,7 +803,12 @@ class AnalysisService:
                         # Item doesn't exist, create it
                         create_data = {
                             'ticker': ticker,
-                            **update_data
+                            'technical_score': update_data.get('technical_score', 50),
+                            'news_score': update_data.get('news_score', 50),
+                            'news_sentiment': update_data.get('news_sentiment', 'neutral'),
+                            'risk_level': update_data.get('risk_level', 'medium'),
+                            'current_price': update_data.get('current_price', 0.0),
+                            'last_updated': datetime.now().isoformat()
                         }
                         async with session.post(f'{PORTFOLIO_API_URL}/watchlist', json=create_data) as create_response:
                             if create_response.status not in (200, 201):

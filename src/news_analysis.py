@@ -321,7 +321,9 @@ class NewsAnalyzer:
             # Calculate final weighted sentiment score (0-100)
             if total_relevance > 0:
                 weighted_sentiment = (total_sentiment / total_relevance)
-                news_score = 50 + (weighted_sentiment * 25)  # Convert to 0-100 scale
+                # Ensure weighted_sentiment is in 0-100 range
+                weighted_sentiment = max(0, min(100, weighted_sentiment))
+                news_score = weighted_sentiment  # No need to scale, already in 0-100
             else:
                 news_score = 50
             

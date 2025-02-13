@@ -9,6 +9,7 @@ class WatchlistUpdate(BaseModel):
     news_score: float = Field(ge=0, le=100)
     news_sentiment: str
     risk_level: str
+    current_price: float = Field(ge=0)
 
     @validator('technical_scores')
     def validate_technical_scores(cls, v):
@@ -27,7 +28,7 @@ class NewsAnalysis(BaseModel):
     sentiment: str
     confidence: str
     article_count: int
-    recent_articles: List[Dict[str, Any]]
+    items: List[Dict[str, Any]]
 
 class CombinedAnalysis(BaseModel):
     ticker: str
