@@ -15,7 +15,7 @@ class FundamentalAnalyzer:
             'debt_to_equity': {
                 'required_max': 3.0,  # Increased - accommodates financial/utility/real estate sectors
                 'max': 2.0,          # Adjusted ideal maximum
-                'weight': 1.0
+                'weight': 1.2        # Increased weight for leverage metric
             },
             'eps_growth_5y': {
                 'required_min': -20,  # More lenient for cyclical/commodity industries
@@ -25,20 +25,16 @@ class FundamentalAnalyzer:
             'gross_margin': {
                 'required_min': 10,   # Lowered - accommodates retail/distribution/commodity
                 'min': 20,           # Adjusted ideal minimum
-                'weight': 1.0
+                'weight': 1.1        # Increased weight for profitability
             },
             'net_margin': {
-                'required_min': 0,    # Allow break-even for growth companies
-                'min': 5,            # Adjusted ideal minimum
-                'weight': 1.0
+                'required_min': -5,   # Allow some losses for growth companies
+                'min': 0,            # Adjusted ideal minimum
+                'weight': 1.1        # Increased weight for profitability
             },
             'operating_margin': {
                 'required_min': -10,   # More lenient for growth/tech companies
                 'min': -5,           # Adjusted ideal minimum
-                'weight': 1.0
-            },
-            'country': {
-                'value': 'USA',
                 'weight': 1.0
             }
         }
@@ -46,29 +42,29 @@ class FundamentalAnalyzer:
         # Buffett criteria with required and ideal thresholds - adjusted for modern business models
         self.buffett_metrics = {
             'sga_to_gross_profit': {
-                'required_max': 0.60,  # Increased - accommodates tech/service companies
-                'max': 0.45,          # Adjusted ideal maximum
-                'weight': 1.0
+                'required_max': 0.70,  # Further increased for tech/service companies
+                'max': 0.50,          # Adjusted ideal maximum
+                'weight': 0.8         # Reduced weight
             },
             'depreciation_to_gross_profit': {
-                'required_max': 0.25,  # Increased for capital-intensive industries
-                'max': 0.20,          # Adjusted ideal maximum
-                'weight': 1.0
+                'required_max': 0.30,  # Increased for capital-intensive industries
+                'max': 0.25,          # Adjusted ideal maximum
+                'weight': 0.7         # Reduced weight
             },
             'interest_to_operating_income': {
-                'required_max': 0.35,  # Increased for financial/real estate sectors
-                'max': 0.25,          # Adjusted ideal maximum
-                'weight': 1.0
+                'required_max': 0.40,  # Increased for financial/real estate sectors
+                'max': 0.30,          # Adjusted ideal maximum
+                'weight': 0.9
             },
             'debt_coverage': {
-                'required_min': 2.0,   # Lowered - more realistic in current market
-                'min': 3.0,           # Adjusted ideal minimum
+                'required_min': 1.5,   # Further lowered for current market conditions
+                'min': 2.5,           # Adjusted ideal minimum
                 'weight': 1.0
             },
             'leverage_ratio': {
-                'required_max': 2.0,   # Increased for financial sector
-                'max': 1.5,           # Adjusted ideal maximum
-                'weight': 1.0
+                'required_max': 2.5,   # Increased for financial sector
+                'max': 2.0,           # Adjusted ideal maximum
+                'weight': 0.8         # Reduced weight
             }
         }
     
@@ -84,89 +80,66 @@ class FundamentalAnalyzer:
             income_stmt = stock.income_stmt
             balance_sheet = stock.balance_sheet
             
-            # Try to get gross profit first - if not available, return None
-            gross_profit = None
-            gross_profit_names = ['Gross Profit', 'GrossProfit']
-            for name in gross_profit_names:
-                try:
-                    if name in income_stmt.index:
-                        gross_profit = income_stmt.loc[name].iloc[0]
-                        break
-                except:
-                    continue
-            
-            # If no gross profit found, try calculating it
-            if gross_profit is None:
-                try:
-                    revenue = income_stmt.loc['Total Revenue'].iloc[0]
-                    cogs = income_stmt.loc['Cost Of Revenue'].iloc[0]
-                    gross_profit = revenue - cogs
-                except:
-                    print(f"{ticker}: No gross profit data available")
-                    return None  # Skip this stock if no gross profit data
-            
             # Basic metrics with validation
             basic_metrics = {}
             
-            # Check each critical metric
+            # Check each critical metric with more lenient handling
             critical_metrics = {
-                'debt_to_equity': ('debtToEquity', float('inf')),
-                'eps_growth_5y': ('earningsGrowth', None),  # Changed from float('-inf')
+                'debt_to_equity': ('debtToEquity', None),
+                'eps_growth_5y': ('earningsGrowth', None),
                 'gross_margin': ('grossMargins', None),
                 'net_margin': ('profitMargins', None),
                 'operating_margin': ('operatingMargins', None),
-                'pe_ratio': ('trailingPE', None),
-                'country': ('country', 'Unknown')
+                'pe_ratio': ('trailingPE', None)
             }
             
-            missing_metrics = []
             for metric, (info_key, default) in critical_metrics.items():
                 value = info.get(info_key, default)
                 if value is None or value in [float('inf'), float('-inf')]:
-                    missing_metrics.append(metric)
+                    basic_metrics[metric] = None
                 else:
-                    if metric != 'country':
-                        value = value * 100 if metric == 'eps_growth_5y' else value
+                    value = value * 100 if metric == 'eps_growth_5y' else value
                     basic_metrics[metric] = value
             
-            if missing_metrics:
-                print(f"{ticker}: Missing critical metrics: {', '.join(missing_metrics)}")
-                basic_metrics['missing_metrics'] = missing_metrics
+            # Get raw financial data
+            raw_data = self._get_raw_financial_data(income_stmt, balance_sheet)
+            basic_metrics.update(raw_data)
             
-            # Store all raw values
-            data = {
-                # Basic metrics from info
-                'debt_to_equity': info.get('debtToEquity', float('inf')),
-                'eps_growth_5y': info.get('earningsGrowth', float('-inf')) * 100,
-                'gross_margin': info.get('grossMargins', float('-inf')) * 100,
-                'net_margin': info.get('profitMargins', float('-inf')) * 100,
-                'operating_margin': info.get('operatingMargins', float('-inf')) * 100,
-                'pe_ratio': info.get('trailingPE', float('-inf')),
-                'country': info.get('country', 'Unknown')
-            }
-            
-            # Try to get all raw values from financial statements
+            # Calculate additional metrics if possible, with error handling
             try:
-                # Store raw values before calculations
-                data.update(self._get_raw_financial_data(income_stmt, balance_sheet))
-                
-                # Calculate ratios if we have the required raw values
-                if all(k in data for k in ['gross_profit', 'sga', 'operating_income', 'net_income', 'long_term_debt']):
-                    data.update({
-                        'sga_to_gross_profit': data['sga'] / data['gross_profit'] if data['gross_profit'] else float('inf'),
-                        'depreciation_to_gross_profit': data['depreciation'] / data['gross_profit'] if data['gross_profit'] else float('inf'),
-                        'interest_to_operating_income': data['interest_expense'] / data['operating_income'] if data['operating_income'] else float('inf'),
-                        'debt_coverage': data['net_income'] * 4 / data['long_term_debt'] if data['long_term_debt'] else float('inf'),
-                        'leverage_ratio': data['total_liabilities'] / data['shareholders_equity'] if data['shareholders_equity'] else float('inf')
-                    })
-                
-            except Exception as e:
-                print(f"Error calculating ratios for {ticker}: {str(e)}")
+                if raw_data.get('gross_profit') and raw_data.get('sga'):
+                    basic_metrics['sga_to_gross_profit'] = min(1.0, raw_data['sga'] / raw_data['gross_profit'])
+            except:
+                pass
+
+            try:
+                if raw_data.get('gross_profit') and raw_data.get('depreciation'):
+                    basic_metrics['depreciation_to_gross_profit'] = min(1.0, raw_data['depreciation'] / raw_data['gross_profit'])
+            except:
+                pass
+
+            try:
+                if raw_data.get('operating_income') and raw_data.get('interest_expense'):
+                    basic_metrics['interest_to_operating_income'] = min(1.0, raw_data['interest_expense'] / abs(raw_data['operating_income']))
+            except:
+                pass
+
+            try:
+                if raw_data.get('net_income') and raw_data.get('long_term_debt'):
+                    basic_metrics['debt_coverage'] = (raw_data['net_income'] * 4) / raw_data['long_term_debt']
+            except:
+                pass
+
+            try:
+                if raw_data.get('total_liabilities') and raw_data.get('shareholders_equity'):
+                    basic_metrics['leverage_ratio'] = raw_data['total_liabilities'] / abs(raw_data['shareholders_equity'])
+            except:
+                pass
             
-            return data
-                
+            return basic_metrics
+            
         except Exception as e:
-            print(f"Error fetching data for {ticker}: {str(e)}")
+            logger.error(f"Error fetching data for {ticker}: {e}")
             return None
 
     def _get_raw_financial_data(self, income_stmt, balance_sheet):
@@ -212,7 +185,7 @@ class FundamentalAnalyzer:
     def score_fundamentals(self, data: Dict) -> float:
         """Calculate fundamental score with more balanced criteria"""
         try:
-            # First check if stock meets minimum criteria
+            # Check minimum criteria with more flexibility
             if not self.meets_minimum_criteria(data):
                 return 0
             
@@ -226,7 +199,7 @@ class FundamentalAnalyzer:
                     
                 value = data.get(metric)
                 if value is None:
-                    return 0  # Fail if any required metric is missing
+                    continue  # Skip missing metrics instead of failing
                 
                 # Get thresholds
                 min_val = criteria.get('required_min', criteria.get('min', float('-inf')))
@@ -237,11 +210,11 @@ class FundamentalAnalyzer:
                 
                 # Calculate score - more balanced scoring
                 if value < min_val or value > max_val:
-                    return 0  # Fail immediately if any metric is outside required range
+                    score = 30  # Reduced penalty for missing criteria
                 elif target_min <= value <= target_max:
                     score = 100  # Meets ideal criteria
                 else:
-                    # Scale score based on how close to ideal range - more gradual scaling
+                    # Scale score based on how close to ideal range
                     if value < target_min:
                         score = 50 + (50 * (value - min_val) / (target_min - min_val))
                     else:  # value > target_max
@@ -257,7 +230,7 @@ class FundamentalAnalyzer:
             for metric, criteria in self.buffett_metrics.items():
                 value = data.get(metric)
                 if value is None:
-                    continue  # Allow missing Buffett metrics
+                    continue  # Skip missing Buffett metrics
                     
                 min_val = criteria.get('required_min', criteria.get('min', float('-inf')))
                 max_val = criteria.get('required_max', criteria.get('max', float('inf')))
@@ -267,7 +240,7 @@ class FundamentalAnalyzer:
                 
                 # Calculate score - more balanced scoring
                 if value < min_val or value > max_val:
-                    score = 30  # Reduced penalty for missing Buffett criteria
+                    score = 30  # Reduced penalty for missing criteria
                 elif target_min <= value <= target_max:
                     score = 100
                 else:
@@ -287,8 +260,8 @@ class FundamentalAnalyzer:
             # Combined score: 70% basic metrics, 30% Buffett criteria
             final_score = (basic_score * 0.7) + (buffett_score * 0.3)
             
-            # Require at least 60% score to pass (lowered from 70%)
-            return final_score if final_score >= 60 else 0
+            # More lenient passing threshold
+            return final_score if final_score >= 55 else 0  # Lowered to 55%
             
         except Exception as e:
             logger.error(f"Error calculating fundamental score: {e}")
@@ -296,43 +269,54 @@ class FundamentalAnalyzer:
 
     def meets_minimum_criteria(self, data: Dict) -> bool:
         """
-        Checks if stock meets minimum required criteria - more stringent version
+        Checks if stock meets minimum required criteria with more flexibility
         """
         try:
-            # Check if we have all required metrics
-            required_metrics = set(self.fundamental_metrics.keys()) | set(self.buffett_metrics.keys())
-            missing_metrics = [metric for metric in required_metrics if metric not in data]
-            if missing_metrics:
-                logger.info(f"Missing required metrics: {missing_metrics}")
-                return False
+            # Count how many metrics pass minimum criteria
+            passed_metrics = 0
+            total_metrics = 0
             
             # Check basic screening criteria
             for metric, criteria in self.fundamental_metrics.items():
-                if metric == 'country':
-                    if data[metric] != criteria['value']:
-                        logger.info(f"Failed country check: {data[metric]} != {criteria['value']}")
-                        return False
+                value = data.get(metric)
+                if value is None:
+                    continue  # Skip missing metrics
+                
+                total_metrics += 1
+                
+                if 'required_min' in criteria and value < criteria['required_min']:
+                    continue
+                if 'required_max' in criteria and value > criteria['required_max']:
                     continue
                     
-                value = data[metric]
-                if 'required_min' in criteria and value < criteria['required_min']:
-                    logger.info(f"Failed {metric} minimum: {value} < {criteria['required_min']}")
-                    return False
-                if 'required_max' in criteria and value > criteria['required_max']:
-                    logger.info(f"Failed {metric} maximum: {value} > {criteria['required_max']}")
-                    return False
+                passed_metrics += 1
             
-            # Check ALL Buffett criteria
+            # Check Buffett criteria with more flexibility
+            buffett_passed = 0
+            buffett_total = 0
+            
             for metric, criteria in self.buffett_metrics.items():
-                value = data[metric]
+                value = data.get(metric)
+                if value is None:
+                    continue
+                
+                buffett_total += 1
+                
                 if 'required_min' in criteria and value < criteria['required_min']:
-                    logger.info(f"Failed Buffett {metric} minimum: {value} < {criteria['required_min']}")
-                    return False
+                    continue
                 if 'required_max' in criteria and value > criteria['required_max']:
-                    logger.info(f"Failed Buffett {metric} maximum: {value} > {criteria['required_max']}")
-                    return False
+                    continue
+                    
+                buffett_passed += 1
             
-            return True
+            # Require at least 50% of available metrics to pass (lowered from 60%)
+            basic_ratio = passed_metrics / total_metrics if total_metrics > 0 else 0
+            buffett_ratio = buffett_passed / buffett_total if buffett_total > 0 else 0
+            
+            # Weight the ratios (80% basic, 20% Buffett) - increased basic weight
+            final_ratio = (basic_ratio * 0.8) + (buffett_ratio * 0.2)
+            
+            return final_ratio >= 0.5  # Lowered to 50% from 60%
             
         except Exception as e:
             logger.error(f"Error checking criteria: {e}")
