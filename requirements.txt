@@ -9,18 +9,15 @@ scipy>=1.7.0
 tqdm>=4.62.0
 
 # API and Web
-fastapi>=0.68.0
-uvicorn>=0.15.0
+fastapi>=0.68.0,<1.0.0
+uvicorn>=0.15.0,<1.0.0
 
 # Telegram
-python-telegram-bot>=13.7
+python-telegram-bot>=13.7,<20.0
 
 # Machine Learning
 transformers>=4.11.0
 torch>=1.9.0
-
-# Logging and monitoring
-logging>=0.5.1.2
 
 # Date/Time handling
 pytz>=2023.3
