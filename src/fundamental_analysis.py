@@ -431,33 +431,44 @@ class FundamentalAnalyzer:
                             results.append(stock_result)
                             raw_data.append(analysis)
                             
-                            # Create task for processing passing stock
-                            try:
-                                from src.service.analysis_service import AnalysisService
-                                service = AnalysisService()
-                                
-                                # Create task and store it
-                                task = asyncio.create_task(
-                                    service.add_to_watchlist(
-                                        ticker,
-                                        {
-                                            'ticker': ticker,
-                                            'fundamental_score': analysis['score'],
-                                            'last_updated': datetime.now().isoformat(),
-                                            'status': 'new'
-                                        }
-                                    )
+                            # Create tasks for stocks that meet criteria
+                            if analysis['score'] >= 70:
+                                # Create watchlist task
+                                watchlist_data = {
+                                    'ticker': ticker,
+                                    'fundamental_score': analysis['score'],
+                                    'status': 'new',
+                                    'added_date': datetime.now().isoformat()
+                                }
+                                watchlist_task = asyncio.create_task(
+                                    self.analysis_service.add_to_watchlist(ticker, watchlist_data)
                                 )
-                                tasks.append(task)
+                                watchlist_task.set_name(f"watchlist_{ticker}")
+                                tasks.append(watchlist_task)
                                 logger.info(f"Created watchlist task for {ticker}")
                                 
-                                # Create task for immediate analysis
-                                analysis_task = asyncio.create_task(service.analyze_single_stock(ticker))
+                                # Create analysis task only after watchlist task
+                                async def process_analysis(t, data):
+                                    try:
+                                        # Wait for watchlist task to complete first
+                                        watchlist_result = await watchlist_task
+                                        if watchlist_result:
+                                            logger.info(f"Watchlist task completed for {t}, starting analysis")
+                                            await self.analysis_service.analyze_single_stock(t)
+                                        else:
+                                            logger.error(f"Watchlist task failed for {t}, skipping analysis")
+                                    except Exception as e:
+                                        logger.error(f"Error in analysis task for {t}: {e}")
+                                
+                                analysis_task = asyncio.create_task(
+                                    process_analysis(ticker, watchlist_data)
+                                )
+                                analysis_task.set_name(f"analysis_{ticker}")
                                 tasks.append(analysis_task)
                                 logger.info(f"Created analysis task for {ticker}")
                                 
-                            except Exception as e:
-                                logger.error(f"Error creating tasks for {ticker}: {e}")
+                                # Log task creation
+                                logger.info(f"Created tasks for {ticker} - Score: {analysis['score']}")
                         else:
                             logger.info(f"{ticker} did not meet criteria: {analysis.get('status')}")
                             raw_data.append(analysis)
@@ -467,8 +478,36 @@ class FundamentalAnalyzer:
                 
                 # Sleep between batches (except after the last batch)
                 if i + batch_size < len(tickers):
-                    logger.info("Sleeping 45 seconds between batches...")
-                    time.sleep(45)
+                    logger.info("Processing pending tasks and sleeping between batches...")
+                    try:
+                        # Wait for current batch of tasks with timeout
+                        batch_tasks = tasks[-len(batch):]  # Get tasks from current batch
+                        if batch_tasks:
+                            logger.info(f"Waiting for {len(batch_tasks)} tasks from current batch...")
+                            batch_completed = await asyncio.wait(
+                                batch_tasks,
+                                timeout=45  # Use the sleep time as timeout
+                            )
+                            
+                            # Check results
+                            done, pending = batch_completed
+                            for task in done:
+                                try:
+                                    result = task.result()
+                                    if isinstance(result, Exception):
+                                        logger.error(f"Task failed with error: {result}")
+                                except Exception as e:
+                                    logger.error(f"Error getting task result: {e}")
+                            
+                            # Cancel any pending tasks from this batch
+                            for task in pending:
+                                task.cancel()
+                                logger.warning(f"Cancelled pending task after timeout")
+                    except Exception as e:
+                        logger.error(f"Error processing batch tasks: {e}")
+                    
+                    # Sleep any remaining time if tasks finished early
+                    await asyncio.sleep(5)  # Minimum sleep to prevent rate limiting
             
             # Wait for all tasks to complete with proper error handling
             if tasks:
