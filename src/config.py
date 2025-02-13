@@ -7,8 +7,9 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 # Analysis intervals
-TECHNICAL_ANALYSIS_INTERVAL = int(os.getenv('ANALYSIS_INTERVAL', '3600'))  # 1 hour in seconds
+TECHNICAL_ANALYSIS_INTERVAL = int(os.getenv('ANALYSIS_INTERVAL', '900'))  # 15 minutes in seconds
 FUNDAMENTAL_ANALYSIS_INTERVAL = 86400  # 24 hours in seconds
+NEWS_ANALYSIS_INTERVAL = 300  # 5 minutes in seconds
 
 # Scoring thresholds
 PORTFOLIO_THRESHOLD_SCORE = int(os.getenv('PORTFOLIO_THRESHOLD_SCORE', '75'))

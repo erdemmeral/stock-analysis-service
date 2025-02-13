@@ -126,77 +126,106 @@ class AnalysisService:
             
             for stock in watchlist:
                 ticker = stock['ticker']
-                try:
-                    # Get technical analysis
-                    tech_analysis = self.tech_analyzer.analyze_stock(ticker)
-                    if not tech_analysis or 'technical_score' not in tech_analysis:
-                        logger.error(f"Invalid technical analysis for {ticker}")
-                        continue
-                    
-                    # Get news analysis
-                    news_analysis = self.news_analyzer.analyze_stock_news(ticker)
-                    if not news_analysis or 'news_score' not in news_analysis:
-                        logger.error(f"Invalid news analysis for {ticker}")
-                        continue
-                    
-                    # Get current price
-                    current_price = tech_analysis.get('signals', {}).get('current_price')
-                    if current_price is None:
-                        try:
-                            stock_info = yf.Ticker(ticker).info
-                            current_price = stock_info.get('regularMarketPrice', 0.0)
-                        except Exception as e:
-                            logger.error(f"Error getting current price for {ticker}: {e}")
-                            current_price = 0.0
-                    
-                    # Log analysis results for debugging
-                    logger.info(f"Analysis results for {ticker}:")
-                    logger.info(f"Technical Score: {tech_analysis['technical_score']['total']:.2f}")
-                    logger.info("Technical Scores by Timeframe:")
-                    for tf, score in tech_analysis['technical_score']['timeframes'].items():
-                        logger.info(f"  {tf}: {score:.2f}")
-                    logger.info(f"News Score: {news_analysis['news_score']}")
-                    logger.info(f"Current Price: {current_price}")
-                    
-                    # Prepare update data with proper type conversion
-                    update_data = {
-                        'last_analysis': datetime.now().isoformat(),
-                        'technical_score': float(tech_analysis['technical_score']['total']),
-                        'technical_scores': {
-                            tf: float(score) 
-                            for tf, score in tech_analysis['technical_score']['timeframes'].items()
-                        },
-                        'news_score': float(news_analysis['news_score']),
-                        'news_sentiment': news_analysis['sentiment'],
-                        'risk_level': tech_analysis['signals']['volatility']['risk_level'],
-                        'current_price': float(current_price) if current_price else 0.0
-                    }
-                    
-                    # Update watchlist item
+                retry_count = 0
+                max_retries = 3
+                
+                while retry_count < max_retries:
                     try:
-                        await self.update_watchlist_item(ticker, update_data)
-                        logger.info(f"Successfully updated watchlist item for {ticker}")
-                    except Exception as e:
-                        logger.error(f"Failed to update watchlist item for {ticker}: {e}")
-                        continue
-                    
-                    # Check if we should create a position
-                    if self.should_create_position(tech_analysis, news_analysis):
-                        await self.handle_portfolio_addition(
-                            ticker,
-                            tech_analysis['technical_score']['total'],
-                            tech_analysis,
-                            news_analysis
-                        )
+                        # Get technical analysis
+                        tech_analysis = self.tech_analyzer.analyze_stock(ticker)
+                        if not tech_analysis or 'technical_score' not in tech_analysis:
+                            logger.error(f"Invalid technical analysis for {ticker}")
+                            retry_count += 1
+                            if retry_count < max_retries:
+                                logger.info(f"Retrying technical analysis for {ticker} (attempt {retry_count + 1})")
+                                await asyncio.sleep(5)  # Wait 5 seconds before retry
+                                continue
+                            break
                         
-                except Exception as e:
-                    logger.error(f"Error analyzing {ticker}: {e}")
-                    logger.error(f"Technical Analysis: {tech_analysis if 'tech_analysis' in locals() else 'Not available'}")
-                    logger.error(f"News Analysis: {news_analysis if 'news_analysis' in locals() else 'Not available'}")
-                    continue
+                        # Get news analysis
+                        news_analysis = self.news_analyzer.analyze_stock_news(ticker)
+                        if not news_analysis or 'news_score' not in news_analysis:
+                            logger.error(f"Invalid news analysis for {ticker}")
+                            retry_count += 1
+                            if retry_count < max_retries:
+                                logger.info(f"Retrying news analysis for {ticker} (attempt {retry_count + 1})")
+                                await asyncio.sleep(5)
+                                continue
+                            break
+                        
+                        # Get current price
+                        current_price = tech_analysis.get('signals', {}).get('current_price')
+                        if current_price is None:
+                            try:
+                                stock_info = yf.Ticker(ticker).info
+                                current_price = stock_info.get('regularMarketPrice', 0.0)
+                            except Exception as e:
+                                logger.error(f"Error getting current price for {ticker}: {e}")
+                                current_price = 0.0
+                        
+                        # Log analysis results for debugging
+                        logger.info(f"Analysis results for {ticker}:")
+                        logger.info(f"Technical Score: {tech_analysis['technical_score']['total']:.2f}")
+                        logger.info("Technical Scores by Timeframe:")
+                        for tf, score in tech_analysis['technical_score']['timeframes'].items():
+                            logger.info(f"  {tf}: {score:.2f}")
+                        logger.info(f"News Score: {news_analysis['news_score']}")
+                        logger.info(f"Current Price: {current_price}")
+                        
+                        # Prepare update data with proper type conversion
+                        update_data = {
+                            'last_analysis': datetime.now().isoformat(),
+                            'technical_score': float(tech_analysis['technical_score']['total']),
+                            'technical_scores': {
+                                tf: float(score) 
+                                for tf, score in tech_analysis['technical_score']['timeframes'].items()
+                            },
+                            'news_score': float(news_analysis['news_score']),
+                            'news_sentiment': news_analysis['sentiment'],
+                            'risk_level': tech_analysis['signals']['volatility']['risk_level'],
+                            'current_price': float(current_price) if current_price else 0.0
+                        }
+                        
+                        # Update watchlist item with retries
+                        update_retry_count = 0
+                        while update_retry_count < max_retries:
+                            try:
+                                await self.update_watchlist_item(ticker, update_data)
+                                logger.info(f"Successfully updated watchlist item for {ticker}")
+                                break
+                            except Exception as e:
+                                update_retry_count += 1
+                                if update_retry_count < max_retries:
+                                    logger.warning(f"Retry {update_retry_count} updating watchlist item for {ticker}: {e}")
+                                    await asyncio.sleep(5)
+                                else:
+                                    logger.error(f"Failed to update watchlist item for {ticker} after {max_retries} attempts: {e}")
+                        
+                        # Check if we should create a position
+                        if self.should_create_position(tech_analysis, news_analysis):
+                            await self.handle_portfolio_addition(
+                                ticker,
+                                tech_analysis['technical_score']['total'],
+                                tech_analysis,
+                                news_analysis
+                            )
+                        
+                        # Successfully processed this stock, break the retry loop
+                        break
+                        
+                    except Exception as e:
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            logger.warning(f"Retry {retry_count} analyzing {ticker}: {e}")
+                            await asyncio.sleep(5)
+                        else:
+                            logger.error(f"Failed to analyze {ticker} after {max_retries} attempts: {e}")
+                            logger.error(f"Technical Analysis: {tech_analysis if 'tech_analysis' in locals() else 'Not available'}")
+                            logger.error(f"News Analysis: {news_analysis if 'news_analysis' in locals() else 'Not available'}")
                 
         except Exception as e:
             logger.error(f"Error in watchlist analysis: {e}")
+            # Don't raise the exception to keep the loop running
 
     def calculate_combined_score(
         self, 
@@ -219,63 +248,62 @@ class AnalysisService:
 
     async def run_analysis_loop(self):
         """Main analysis loop with different intervals"""
-        news_check_counter = 0  # Counter for news checks
-        news_check_interval = 300  # Check news every 5 minutes
-        
-        while True:
-            try:
+        try:
+            while True:
                 current_time = datetime.now()
                 
                 # Run fundamental analysis every 24 hours
                 if (self.last_fundamental_run is None or 
                     (current_time - self.last_fundamental_run).total_seconds() >= FUNDAMENTAL_ANALYSIS_INTERVAL):
-                    await self.run_fundamental_analysis()
+                    logger.info("Running fundamental analysis...")
+                    fund_results = await self.run_fundamental_analysis()
                     self.last_fundamental_run = current_time
+                    
+                    # Immediately run technical and news analysis on new stocks
+                    if fund_results:
+                        logger.info("Running initial analysis on new stocks...")
+                        await self.analyze_watchlist()
                 
-                # Run technical analysis on watchlist every hour
+                # Run technical analysis every 15 minutes
                 await self.analyze_watchlist()
                 
-                # Run news analysis more frequently but not too often
-                news_check_counter += self.analysis_interval
-                if news_check_counter >= news_check_interval:
-                    watchlist = await self.get_watchlist()
-                    for stock in watchlist:
-                        ticker = stock['ticker']
-                        try:
-                            news_analysis = self.news_analyzer.analyze_stock_news(ticker)
+                # Run news analysis every 5 minutes
+                watchlist = await self.get_watchlist()
+                for stock in watchlist:
+                    ticker = stock['ticker']
+                    try:
+                        news_analysis = self.news_analyzer.analyze_stock_news(ticker)
+                        
+                        # Update watchlist with news scores
+                        update_data = {
+                            'news_score': news_analysis['news_score'],
+                            'news_sentiment': news_analysis['sentiment'],
+                            'last_news': current_time.isoformat()
+                        }
+                        
+                        await self.update_watchlist_item(ticker, update_data)
+                        
+                        # Check for significant news changes
+                        old_score = float(stock.get('news_score', 50))
+                        score_change = abs(news_analysis['news_score'] - old_score)
+                        
+                        if (score_change > 15 or  # Significant change in sentiment
+                            news_analysis['news_score'] >= 70 or  # Very positive news
+                            news_analysis['news_score'] <= 30):   # Very negative news
                             
-                            # Update watchlist with news scores
-                            update_data = {
-                                'news_score': news_analysis['news_score'],
-                                'news_sentiment': news_analysis['sentiment'],
-                                'last_news': current_time.isoformat()
-                            }
-                            
-                            await self.update_watchlist_item(ticker, update_data)
-                            
-                            # Check for significant news changes
-                            old_score = float(stock.get('news_score', 50))
-                            score_change = abs(news_analysis['news_score'] - old_score)
-                            
-                            if (score_change > 15 or  # Significant change in sentiment
-                                news_analysis['news_score'] >= 70 or  # Very positive news
-                                news_analysis['news_score'] <= 30):   # Very negative news
-                                
-                                logger.info(f"Significant news change for {ticker} (change: {score_change:.2f})")
-                                await self.check_position_opportunity(ticker, news_analysis)
-                            
-                        except Exception as e:
-                            logger.error(f"Error monitoring news for {ticker}: {e}")
-                            continue
-                    
-                    news_check_counter = 0  # Reset counter
+                            logger.info(f"Significant news change for {ticker} (change: {score_change:.2f})")
+                            await self.check_position_opportunity(ticker, news_analysis)
+                        
+                    except Exception as e:
+                        logger.error(f"Error monitoring news for {ticker}: {e}")
+                        continue
                 
-                # Wait for next technical analysis interval
-                await asyncio.sleep(self.analysis_interval)
+                # Wait for 5 minutes before next iteration
+                await asyncio.sleep(300)  # 5 minutes
                 
-            except Exception as e:
-                logger.error(f"Error in analysis loop: {e}")
-                await asyncio.sleep(60)  # Wait before retrying
+        except Exception as e:
+            logger.error(f"Error in analysis loop: {e}")
+            await asyncio.sleep(60)  # Wait before retrying
 
     async def handle_portfolio_addition(
         self,

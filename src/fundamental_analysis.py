@@ -475,5 +475,5 @@ class FundamentalAnalyzer:
             'status': 'analyzed',
             'score': score,
             'raw_metrics': data,
-            'meets_criteria': score >= 60  # Require at least 70% score to pass
+            'meets_criteria': score >= 70  # Require at least 70% score to pass
         } 
