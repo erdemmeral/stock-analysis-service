@@ -5,6 +5,7 @@ from tqdm import tqdm
 import time
 import logging
 import os
+from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
@@ -428,21 +429,34 @@ class FundamentalAnalyzer:
                             results.append(stock_result)
                             raw_data.append(analysis)
                             
-                            # Trigger immediate analysis for this stock
+                            # Add to watchlist first
                             try:
-                                # Use asyncio.create_task to run in background
                                 import asyncio
                                 from src.service.analysis_service import AnalysisService
                                 
-                                async def analyze_passing_stock():
+                                async def process_passing_stock():
                                     service = AnalysisService()
-                                    await service.analyze_single_stock(ticker)
+                                    # First add to watchlist
+                                    watchlist_data = {
+                                        'ticker': ticker,
+                                        'fundamental_score': analysis['score'],
+                                        'last_updated': datetime.now().isoformat(),
+                                        'status': 'new'
+                                    }
+                                    added = await service.add_to_watchlist(ticker, watchlist_data)
+                                    
+                                    if added:
+                                        # Then trigger immediate analysis
+                                        await service.analyze_single_stock(ticker)
+                                        logger.info(f"Added {ticker} to watchlist and triggered analysis")
+                                    else:
+                                        logger.error(f"Failed to add {ticker} to watchlist")
                                 
                                 # Run in background without waiting
-                                asyncio.create_task(analyze_passing_stock())
-                                logger.info(f"Triggered immediate analysis for {ticker}")
+                                asyncio.create_task(process_passing_stock())
+                                logger.info(f"Processing {ticker} for watchlist addition and analysis")
                             except Exception as e:
-                                logger.error(f"Error triggering immediate analysis for {ticker}: {e}")
+                                logger.error(f"Error processing {ticker} for watchlist: {e}")
                         else:
                             logger.info(f"{ticker} did not meet criteria: {analysis.get('status')}")
                             raw_data.append(analysis)

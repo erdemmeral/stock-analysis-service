@@ -305,125 +305,68 @@ class AnalysisService:
             logger.error(f"Error in analysis loop: {e}")
             await asyncio.sleep(60)  # Wait before retrying
 
-    async def handle_portfolio_addition(
-        self,
-        ticker: str,
-        score: float,
-        tech_analysis: Dict,
-        news_analysis: Dict
-    ):
-        """Handle adding stock to portfolio"""
+    async def handle_portfolio_addition(self, ticker: str, score: float, tech_analysis: Dict, news_analysis: Dict):
+        """Handle adding a position to the portfolio"""
         try:
-            # Get technical signals
-            signals = tech_analysis['signals']['indicators']
-            support_resistance = tech_analysis['support_resistance']
-            trend = tech_analysis['trend']
-            current_price = tech_analysis['signals']['current_price']
-            
-            # Prepare position data for API
+            # Prepare position data
             position_data = {
                 'ticker': ticker,
-                'entry_price': float(tech_analysis['signals'].get('current_price', 0)),
-                'current_price': current_price,
-                'entry_date': datetime.now().isoformat(),
-                'fundamental_score': score * 0.4,  # 40% of combined score
-                'technical_score': tech_analysis['technical_score']['total_score'],
+                'entry_price': tech_analysis['signals']['current_price'],
+                'timeframe': 'medium',  # Default to medium timeframe
+                'technical_score': tech_analysis['technical_score']['total'],
                 'news_score': news_analysis['news_score'],
-                'overall_score': score,
-                'pnl': 0,  # Initial PnL
-                'timeframe': self.tech_analyzer.timeframe,  # 'medium' or 'long'
-                'status': 'open',
-                'technical_data': {
-                    'support_levels': support_resistance['support']['levels'][:3],
-                    'resistance_levels': support_resistance['resistance']['levels'][:3],
-                    'trend': {
-                        'direction': trend['trend'],
-                        'strength': trend['strength']
-                    },
-                    'signals': {
-                        'rsi': signals['momentum']['rsi'],
-                        'macd': {
-                            'value': signals['trend']['macd'],
-                            'signal': signals['trend']['macd_trend']
-                        },
-                        'predicted_move': tech_analysis['predictions']['final']['predicted_change_percent']
-                    }
+                'support_levels': tech_analysis['support_resistance']['support'],
+                'resistance_levels': tech_analysis['support_resistance']['resistance'],
+                'trend': tech_analysis['signals']['trend']['direction'],
+                'signals': {
+                    'momentum': tech_analysis['signals']['momentum'],
+                    'volume': tech_analysis['signals']['volume'],
+                    'volatility': tech_analysis['signals']['volatility']
                 }
             }
-            
-            # Send position to backend API
+
+            # Create position via API
             async with aiohttp.ClientSession() as session:
                 async with session.post(
-                    'https://portfolio-tracker-rough-dawn-5271.fly.dev/api/positions',
+                    f'{PORTFOLIO_API_URL}/positions',
                     json=position_data
                 ) as response:
-                    if response.status != 201:
-                        raise Exception(f"Failed to create position: {await response.text()}")
-            
-            # Send notification
-            message = (
-                f"🚨 <b>New Portfolio Addition</b> 🚨\n"
-                f"Ticker: {ticker}\n"
-                f"Entry Price: ${current_price:.2f}\n"
-                f"Timeframe: {self.tech_analyzer.timeframe}\n"
-                f"Scores:\n"
-                f"- Technical: {tech_analysis['technical_score']['total_score']:.1f}\n"
-                f"- Fundamental: {score * 0.4:.1f}\n"
-                f"- News: {news_analysis['news_score']:.1f}\n"
-                f"- Overall: {score:.1f}\n"
-                f"Expected Move: {tech_analysis['predictions']['final']['predicted_change_percent']:.1f}%\n"
-                f"Support Levels: ${', $'.join([f'{x:.2f}' for x in position_data['technical_data']['support_levels']])}\n"
-                f"Resistance Levels: ${', $'.join([f'{x:.2f}' for x in position_data['technical_data']['resistance_levels']])}"
-            )
-            
-            await self.send_telegram_alert(message)
-            
-        except Exception as e:
-            logger.error(f"Error adding {ticker} to portfolio: {e}")
+                    if response.status not in (200, 201):
+                        logger.error(f"Failed to create position for {ticker}")
+                        return False
+                    
+                    logger.info(f"Successfully created position for {ticker}")
+                    return True
 
-    async def handle_portfolio_removal(
-        self,
-        ticker: str,
-        score: float,
-        tech_analysis: Dict,
-        news_analysis: Dict
-    ):
-        """Handle removing stock from portfolio"""
+        except Exception as e:
+            logger.error(f"Error creating position for {ticker}: {e}")
+            return False
+
+    async def handle_portfolio_removal(self, ticker: str, score: float, tech_analysis: Dict, news_analysis: Dict):
+        """Handle removing a position from the portfolio"""
         try:
-            # Get entry data from API
-            async with aiohttp.ClientSession() as session:
-                async with session.get(f'{PORTFOLIO_API_URL}/positions/{ticker}') as response:
-                    if response.status != 200:
-                        raise Exception(f"Failed to get position data: {response.status}")
-                    entry_data = await response.json()
-            
-            entry_price = entry_data['entry_price']
             current_price = tech_analysis['signals']['current_price']
             
-            # Calculate return
-            returns_pct = ((current_price - entry_price) / entry_price) * 100
-            
-            # Remove from portfolio using API
+            # Send sell signal via API
             async with aiohttp.ClientSession() as session:
-                async with session.delete(f'{PORTFOLIO_API_URL}/positions/{ticker}') as response:
-                    if response.status not in (200, 204):
-                        raise Exception(f"Failed to remove position: {response.status}")
-            
-            # Send notification
-            message = (
-                f"🔴 <b>Portfolio Exit</b> 🔴\n"
-                f"Ticker: {ticker}\n"
-                f"Exit Price: ${current_price:.2f}\n"
-                f"Return: {returns_pct:+.1f}%\n"
-                f"Current Score: {score:.1f}\n"
-                f"Technical Signal: {tech_analysis['predictions']['final']['direction']}\n"
-                f"News Sentiment: {news_analysis['sentiment']}"
-            )
-            
-            await self.send_telegram_alert(message)
-            
+                async with session.post(
+                    f'{PORTFOLIO_API_URL}/positions/{ticker}/sell',
+                    json={
+                        'soldPrice': current_price,
+                        'soldDate': datetime.now().isoformat(),
+                        'sellCondition': 'signal'
+                    }
+                ) as response:
+                    if response.status != 200:
+                        logger.error(f"Failed to process sell signal for {ticker}")
+                        return False
+                    
+                    logger.info(f"Successfully processed sell signal for {ticker}")
+                    return True
+
         except Exception as e:
-            logger.error(f"Error removing {ticker} from portfolio: {e}")
+            logger.error(f"Error processing sell signal for {ticker}: {e}")
+            return False
 
     async def store_analysis(self, ticker: str, analysis: Dict):
         """Store analysis results using API"""
@@ -838,42 +781,25 @@ class AnalysisService:
             return False
 
     async def update_watchlist_item(self, ticker: str, update_data: Dict) -> bool:
-        """Update a watchlist item with new analysis data"""
+        """Update a watchlist item with new analysis"""
         try:
             async with aiohttp.ClientSession() as session:
-                # First check if item exists
-                check_url = f'{PORTFOLIO_API_URL}/watchlist/{ticker}'
-                async with session.get(check_url) as response:
+                async with session.patch(
+                    f'{PORTFOLIO_API_URL}/watchlist/{ticker}',
+                    json=update_data
+                ) as response:
                     if response.status == 404:
-                        # Item doesn't exist, create it
-                        create_data = {
-                            'ticker': ticker,
-                            'technical_score': update_data.get('technical_score', 50),
-                            'news_score': update_data.get('news_score', 50),
-                            'news_sentiment': update_data.get('news_sentiment', 'neutral'),
-                            'risk_level': update_data.get('risk_level', 'medium'),
-                            'current_price': update_data.get('current_price', 0.0),
-                            'last_updated': datetime.now().isoformat()
-                        }
-                        async with session.post(f'{PORTFOLIO_API_URL}/watchlist', json=create_data) as create_response:
-                            if create_response.status not in (200, 201):
-                                text = await create_response.text()
-                                logger.error(f"Failed to create watchlist item for {ticker}. Status: {create_response.status}, Response: {text}")
-                                return False
-                            logger.info(f"Created new watchlist item for {ticker}")
-                            return True
-
-                # Item exists, update it
-                async with session.patch(check_url, json=update_data) as update_response:
-                    if update_response.status != 200:
-                        text = await update_response.text()
-                        logger.error(f"Failed to update watchlist item for {ticker}. Status: {update_response.status}, Response: {text}")
+                        logger.error(f"Watchlist item not found for {ticker}")
                         return False
-                    logger.info(f"Updated watchlist item for {ticker}")
+                    elif response.status != 200:
+                        logger.error(f"Failed to update watchlist item for {ticker}")
+                        return False
+                    
+                    logger.info(f"Successfully updated watchlist item for {ticker}")
                     return True
 
         except Exception as e:
-            logger.error(f"API error for {ticker}: {e}")
+            logger.error(f"Error updating watchlist item for {ticker}: {e}")
             return False
 
     async def analyze_single_stock(self, ticker: str):
@@ -959,3 +885,34 @@ class AnalysisService:
             
         except Exception as e:
             logger.error(f"Error in immediate analysis for {ticker}: {e}")
+
+    async def add_to_watchlist(self, ticker: str, watchlist_data: Dict) -> bool:
+        """Add a stock to the watchlist"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                # Check if already exists
+                check_url = f'{PORTFOLIO_API_URL}/watchlist/{ticker}'
+                async with session.get(check_url) as response:
+                    exists = response.status == 200
+                
+                if exists:
+                    # Update existing entry
+                    async with session.patch(check_url, json=watchlist_data) as update_response:
+                        if update_response.status != 200:
+                            logger.error(f"Failed to update watchlist entry for {ticker}")
+                            return False
+                        logger.info(f"Updated existing watchlist entry for {ticker}")
+                else:
+                    # Create new entry
+                    create_url = f'{PORTFOLIO_API_URL}/watchlist'
+                    async with session.post(create_url, json=watchlist_data) as create_response:
+                        if create_response.status not in (200, 201):
+                            logger.error(f"Failed to create watchlist entry for {ticker}")
+                            return False
+                        logger.info(f"Created new watchlist entry for {ticker}")
+                
+                return True
+                
+        except Exception as e:
+            logger.error(f"Error adding {ticker} to watchlist: {e}")
+            return False
