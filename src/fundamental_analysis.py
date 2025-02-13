@@ -12,6 +12,10 @@ logger = logging.getLogger(__name__)
 
 class FundamentalAnalyzer:
     def __init__(self):
+        # Initialize AnalysisService
+        from src.service.analysis_service import AnalysisService
+        self.analysis_service = AnalysisService()
+        
         # Basic screening metrics with minimum and ideal thresholds
         self.fundamental_metrics = {
             'debt_to_equity': {
@@ -432,7 +436,12 @@ class FundamentalAnalyzer:
                             raw_data.append(analysis)
                             
                             # Create tasks for stocks that meet criteria
-                            if analysis['score'] >= 70:
+                            try:
+                                if not hasattr(self, 'analysis_service'):
+                                    logger.info("Initializing AnalysisService...")
+                                    from src.service.analysis_service import AnalysisService
+                                    self.analysis_service = AnalysisService()
+                                
                                 # Create watchlist task
                                 watchlist_data = {
                                     'ticker': ticker,
@@ -440,6 +449,7 @@ class FundamentalAnalyzer:
                                     'status': 'new',
                                     'added_date': datetime.now().isoformat()
                                 }
+                                
                                 watchlist_task = asyncio.create_task(
                                     self.analysis_service.add_to_watchlist(ticker, watchlist_data)
                                 )
@@ -467,8 +477,10 @@ class FundamentalAnalyzer:
                                 tasks.append(analysis_task)
                                 logger.info(f"Created analysis task for {ticker}")
                                 
-                                # Log task creation
-                                logger.info(f"Created tasks for {ticker} - Score: {analysis['score']}")
+                            except Exception as e:
+                                logger.error(f"Error creating tasks for {ticker}: {e}")
+                                continue
+                                
                         else:
                             logger.info(f"{ticker} did not meet criteria: {analysis.get('status')}")
                             raw_data.append(analysis)
