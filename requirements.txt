@@ -13,7 +13,7 @@ fastapi>=0.68.0,<1.0.0
 uvicorn>=0.15.0,<1.0.0
 
 # Telegram
-python-telegram-bot>=13.7,<20.0
+python-telegram-bot>=13.7,<14.0
 
 # Machine Learning
 transformers>=4.11.0

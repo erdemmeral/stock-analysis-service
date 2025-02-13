@@ -407,6 +407,7 @@ class FundamentalAnalyzer:
             
             results = []
             raw_data = []
+            tasks = []  # List to store async tasks
             
             # Process in batches
             batch_size = 30
@@ -434,7 +435,7 @@ class FundamentalAnalyzer:
                                 import asyncio
                                 from src.service.analysis_service import AnalysisService
                                 
-                                async def process_passing_stock():
+                                async def process_passing_stock(ticker, analysis):
                                     service = AnalysisService()
                                     # First add to watchlist
                                     watchlist_data = {
@@ -452,11 +453,13 @@ class FundamentalAnalyzer:
                                     else:
                                         logger.error(f"Failed to add {ticker} to watchlist")
                                 
-                                # Run in background without waiting
-                                asyncio.create_task(process_passing_stock())
-                                logger.info(f"Processing {ticker} for watchlist addition and analysis")
+                                # Create task and store it
+                                task = asyncio.create_task(process_passing_stock(ticker, analysis))
+                                tasks.append(task)
+                                logger.info(f"Created task for processing {ticker}")
+                                
                             except Exception as e:
-                                logger.error(f"Error processing {ticker} for watchlist: {e}")
+                                logger.error(f"Error creating task for {ticker}: {e}")
                         else:
                             logger.info(f"{ticker} did not meet criteria: {analysis.get('status')}")
                             raw_data.append(analysis)
@@ -468,6 +471,14 @@ class FundamentalAnalyzer:
                 if i + batch_size < len(tickers):
                     logger.info("Sleeping 45 seconds between batches...")
                     time.sleep(45)
+            
+            # Wait for all tasks to complete
+            if tasks:
+                try:
+                    loop = asyncio.get_event_loop()
+                    loop.run_until_complete(asyncio.gather(*tasks))
+                except Exception as e:
+                    logger.error(f"Error waiting for watchlist tasks to complete: {e}")
             
             logger.info(f"Fundamental analysis complete. {len(results)} stocks met criteria")
             if results:
