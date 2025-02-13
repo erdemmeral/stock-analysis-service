@@ -6,6 +6,7 @@ import time
 import logging
 import os
 from datetime import datetime
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -391,7 +392,7 @@ class FundamentalAnalyzer:
         
         return self.score_fundamentals(minimum_data) 
 
-    def analyze_stocks(self):
+    async def analyze_stocks(self):
         """Analyze stocks from stock_tickers.txt"""
         try:
             # Check if file exists
@@ -430,36 +431,33 @@ class FundamentalAnalyzer:
                             results.append(stock_result)
                             raw_data.append(analysis)
                             
-                            # Add to watchlist first
+                            # Create task for processing passing stock
                             try:
-                                import asyncio
                                 from src.service.analysis_service import AnalysisService
-                                
-                                async def process_passing_stock(ticker, analysis):
-                                    service = AnalysisService()
-                                    # First add to watchlist
-                                    watchlist_data = {
-                                        'ticker': ticker,
-                                        'fundamental_score': analysis['score'],
-                                        'last_updated': datetime.now().isoformat(),
-                                        'status': 'new'
-                                    }
-                                    added = await service.add_to_watchlist(ticker, watchlist_data)
-                                    
-                                    if added:
-                                        # Then trigger immediate analysis
-                                        await service.analyze_single_stock(ticker)
-                                        logger.info(f"Added {ticker} to watchlist and triggered analysis")
-                                    else:
-                                        logger.error(f"Failed to add {ticker} to watchlist")
+                                service = AnalysisService()
                                 
                                 # Create task and store it
-                                task = asyncio.create_task(process_passing_stock(ticker, analysis))
+                                task = asyncio.create_task(
+                                    service.add_to_watchlist(
+                                        ticker,
+                                        {
+                                            'ticker': ticker,
+                                            'fundamental_score': analysis['score'],
+                                            'last_updated': datetime.now().isoformat(),
+                                            'status': 'new'
+                                        }
+                                    )
+                                )
                                 tasks.append(task)
-                                logger.info(f"Created task for processing {ticker}")
+                                logger.info(f"Created watchlist task for {ticker}")
+                                
+                                # Create task for immediate analysis
+                                analysis_task = asyncio.create_task(service.analyze_single_stock(ticker))
+                                tasks.append(analysis_task)
+                                logger.info(f"Created analysis task for {ticker}")
                                 
                             except Exception as e:
-                                logger.error(f"Error creating task for {ticker}: {e}")
+                                logger.error(f"Error creating tasks for {ticker}: {e}")
                         else:
                             logger.info(f"{ticker} did not meet criteria: {analysis.get('status')}")
                             raw_data.append(analysis)
@@ -472,13 +470,23 @@ class FundamentalAnalyzer:
                     logger.info("Sleeping 45 seconds between batches...")
                     time.sleep(45)
             
-            # Wait for all tasks to complete
+            # Wait for all tasks to complete with proper error handling
             if tasks:
                 try:
+                    logger.info(f"Waiting for {len(tasks)} tasks to complete...")
                     loop = asyncio.get_event_loop()
-                    loop.run_until_complete(asyncio.gather(*tasks))
+                    completed_tasks = await asyncio.gather(*tasks, return_exceptions=True)
+                    
+                    # Check for any errors in completed tasks
+                    for i, result in enumerate(completed_tasks):
+                        if isinstance(result, Exception):
+                            logger.error(f"Task {i} failed with error: {result}")
+                        elif isinstance(result, bool) and not result:
+                            logger.error(f"Task {i} completed but returned False")
+                    
+                    logger.info("All tasks completed")
                 except Exception as e:
-                    logger.error(f"Error waiting for watchlist tasks to complete: {e}")
+                    logger.error(f"Error waiting for tasks to complete: {e}")
             
             logger.info(f"Fundamental analysis complete. {len(results)} stocks met criteria")
             if results:

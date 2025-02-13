@@ -232,30 +232,36 @@ def handle_exception(loop, context):
     logger.error(f"Error in event loop: {msg}")
 
 async def main():
-    """Main entry point"""
+    """Main function to run the analysis service"""
     try:
-        # Initialize service
         service = AnalysisService()
         
         # Send startup message
-        startup_message = (
-            "🚀 Stock Analysis Service Started\n\n"
-            f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-            f"Region: FRA\n"
-            f"Technical Analysis Interval: {TECHNICAL_ANALYSIS_INTERVAL/3600:.1f} hours\n"
-            f"News Analysis: Continuous\n"
-            f"Fundamental Analysis Interval: {FUNDAMENTAL_ANALYSIS_INTERVAL/3600:.1f} hours\n"
-            f"Portfolio Threshold: {PORTFOLIO_THRESHOLD_SCORE}\n"
-            "Status: Ready to analyze stocks 📊"
-        )
-        await service.send_telegram_alert(startup_message)
+        await service.send_telegram_alert("🚀 Stock Analysis Service Started")
         
-        # Run the analysis loop
+        # Run initial fundamental analysis
+        logger.info("Running initial fundamental analysis...")
+        fund_analyzer = FundamentalAnalyzer()
+        results, _ = await fund_analyzer.analyze_stocks()  # Now properly awaiting
+        
+        if results:
+            logger.info(f"Initial fundamental analysis found {len(results)} stocks")
+        
+        # Start the main analysis loop
         await service.run_analysis_loop()
         
     except Exception as e:
-        logger.error(f"Service error: {e}")
-        sys.exit(1)
+        logger.error(f"Error in main: {e}")
+        
+if __name__ == "__main__":
+    # Set up logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s\t\n%(levelname)s:%(name)s:%(message)s'
+    )
+    
+    # Run the async main function
+    asyncio.run(main())
 
 async def test_main():
     """Test main program functionality"""
