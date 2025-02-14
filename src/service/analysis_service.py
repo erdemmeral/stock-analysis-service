@@ -174,18 +174,19 @@ class AnalysisService:
                         logger.info(f"News Score: {news_analysis['news_score']}")
                         logger.info(f"Current Price: {current_price}")
                         
-                        # Prepare update data with proper type conversion
+                        # Replace existing technical scores instead of adding new ones
                         update_data = {
                             'last_analysis': datetime.now().isoformat(),
                             'technical_score': float(tech_analysis['technical_score']['total']),
                             'technical_scores': {
-                                tf: float(score) 
+                                tf: float(score)
                                 for tf, score in tech_analysis['technical_score']['timeframes'].items()
                             },
                             'news_score': float(news_analysis['news_score']),
                             'news_sentiment': news_analysis['sentiment'],
                             'risk_level': tech_analysis['signals']['volatility']['risk_level'],
-                            'current_price': float(current_price) if current_price else 0.0
+                            'current_price': float(current_price) if current_price else 0.0,
+                            'replace_scores': True  # Flag to indicate we want to replace existing scores
                         }
                         
                         # Update watchlist item with retries

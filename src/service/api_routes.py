@@ -70,11 +70,12 @@ async def update_watchlist_item(ticker: str, update_data: WatchlistUpdate):
         watchlist_data = {
             "last_analysis": update_data.last_analysis,
             "technical_score": update_data.technical_score,
-            "technical_scores": update_data.technical_scores,  # New field for timeframe scores
+            "technical_scores": update_data.technical_scores,  # Single set of timeframe scores
             "news_score": update_data.news_score,
             "news_sentiment": update_data.news_sentiment,
             "risk_level": update_data.risk_level,
-            "current_price": update_data.current_price
+            "current_price": update_data.current_price,
+            "replace_scores": True  # Always replace scores instead of adding new ones
         }
         
         # Update using Portfolio API
@@ -84,9 +85,21 @@ async def update_watchlist_item(ticker: str, update_data: WatchlistUpdate):
                 json=watchlist_data
             ) as response:
                 if response.status == 404:
-                    raise HTTPException(status_code=404, detail="Watchlist item not found")
+                    # If item doesn't exist, create it
+                    async with session.post(
+                        f"{PORTFOLIO_API_URL}/watchlist",
+                        json={"ticker": ticker, **watchlist_data}
+                    ) as create_response:
+                        if create_response.status not in (200, 201):
+                            raise HTTPException(
+                                status_code=create_response.status,
+                                detail="Failed to create watchlist item"
+                            )
                 elif response.status != 200:
-                    raise HTTPException(status_code=response.status, detail="Failed to update watchlist item")
+                    raise HTTPException(
+                        status_code=response.status,
+                        detail="Failed to update watchlist item"
+                    )
                 
         return {"status": "success", "message": "Watchlist item updated"}
         
