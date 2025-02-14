@@ -509,54 +509,50 @@ class AnalysisService:
         return "Multiple Technical Indicators"
 
     def should_create_position(self, tech_analysis: Dict, news_analysis: Dict) -> bool:
-        """Check if we should create a position based on analysis"""
+        """Determine if we should create a position based on technical and news analysis"""
         try:
-            logger.info("\n=== Position Criteria Check ===")
+            # Get technical scores for all timeframes
+            technical_scores = tech_analysis.get('technical_score', {}).get('timeframes', {})
+            if not technical_scores:
+                return False
+
+            # Find best timeframe score
+            best_score = max(technical_scores.values())
             
-            # Get scores
-            tech_score = tech_analysis['technical_score']['total']
-            news_score = news_analysis['news_score']
+            # Get news score
+            news_score = news_analysis.get('news_score', 0)
             
-            # Log all scores for debugging
-            logger.info(f"Technical Score: {tech_score:.2f}")
-            logger.info(f"Technical Scores by Timeframe:")
-            for tf, score in tech_analysis['technical_score']['timeframes'].items():
-                logger.info(f"  {tf}: {score:.2f}")
-            logger.info(f"News Score: {news_score:.2f}")
+            # Check volume profile
+            volume_profile = tech_analysis.get('signals', {}).get('volume', {}).get('profile', 'low')
+            has_good_volume = volume_profile in ['high', 'increasing', 'normal']
             
-            # Technical criteria - require strong alignment
-            timeframe_scores = tech_analysis['technical_score']['timeframes']
-            aligned_bullish = all(score >= 60 for score in timeframe_scores.values())
+            # Check volatility
+            volatility = tech_analysis.get('signals', {}).get('volatility', {})
+            risk_level = volatility.get('risk_level', 'high')
+            volatility_trend = volatility.get('trend', 'increasing')
             
-            # Updated news criteria - more lenient
-            news_criteria = (
-                news_score >= 40 and  # Lowered threshold
-                news_analysis['sentiment'] in ['positive', 'neutral']  # Allow neutral
+            # Position creation criteria:
+            # 1. Best timeframe technical score > 60
+            # 2. News score >= 40 (not too negative)
+            # 3. Good volume
+            # 4. Acceptable risk level
+            meets_criteria = (
+                best_score >= 60 and
+                news_score >= 40 and
+                has_good_volume and
+                risk_level != 'high' and
+                volatility_trend != 'increasing'
             )
             
-            # Risk check
-            risk_level = tech_analysis['signals']['volatility']['risk_level']
-            risk_acceptable = risk_level in ['low', 'medium']
+            if meets_criteria:
+                logger.info(f"Position creation criteria met: tech_score={best_score}, "
+                          f"news_score={news_score}, volume={volume_profile}, "
+                          f"risk={risk_level}, vol_trend={volatility_trend}")
             
-            # Log decision factors
-            logger.info("\nDecision Factors:")
-            logger.info(f"Technical Score: {tech_score:.2f}")
-            logger.info(f"Timeframe Alignment - Bullish: {aligned_bullish}")
-            logger.info(f"News Score ({news_score:.2f}) >= 40: {news_criteria}")
-            logger.info(f"Risk Level ({risk_level}): {risk_acceptable}")
-            
-            # Final decision - require strong technical setup
-            should_enter = (
-                (aligned_bullish and tech_score >= 65) and  # Strong technical setup
-                news_criteria and  # More lenient news requirement
-                risk_acceptable
-            )
-            
-            logger.info(f"\nFinal Decision: {'ENTER' if should_enter else 'SKIP'}")
-            return should_enter
+            return meets_criteria
             
         except Exception as e:
-            logger.error(f"Error checking position criteria: {e}")
+            logger.error(f"Error in should_create_position: {e}")
             return False
 
     async def analyze_technical(self):
@@ -788,22 +784,54 @@ class AnalysisService:
             return False
 
     async def update_watchlist_item(self, ticker: str, update_data: Dict) -> bool:
-        """Update a watchlist item with new analysis"""
+        """Update watchlist item with new analysis"""
         try:
+            # Determine best timeframe based on highest technical score
+            technical_scores = update_data.get('technical_scores', {})
+            if technical_scores:
+                best_timeframe = max(technical_scores.items(), key=lambda x: x[1])[0]
+                best_score = technical_scores[best_timeframe]
+            else:
+                best_timeframe = None
+                best_score = 0
+
+            # Get current price if not provided
+            current_price = update_data.get('current_price')
+            if current_price is None or current_price == 0:
+                try:
+                    stock = yf.Ticker(ticker)
+                    current_price = stock.info.get('regularMarketPrice', 0)
+                except Exception as e:
+                    logger.error(f"Error fetching current price for {ticker}: {e}")
+                    current_price = 0
+
+            # Update the data with best timeframe and current price
+            watchlist_data = {
+                **update_data,
+                "best_timeframe": best_timeframe,
+                "current_price": current_price,
+                "technical_score": best_score  # Use the score from best timeframe
+            }
+
             async with aiohttp.ClientSession() as session:
                 async with session.patch(
-                    f'{PORTFOLIO_API_URL}/watchlist/{ticker}',
-                    json=update_data
+                    f"{PORTFOLIO_API_URL}/watchlist/{ticker}",
+                    json=watchlist_data
                 ) as response:
                     if response.status == 404:
-                        logger.error(f"Watchlist item not found for {ticker}")
-                        return False
+                        # If item doesn't exist, create it
+                        async with session.post(
+                            f"{PORTFOLIO_API_URL}/watchlist",
+                            json={"ticker": ticker, **watchlist_data}
+                        ) as create_response:
+                            if create_response.status not in (200, 201):
+                                logger.error(f"Failed to create watchlist item for {ticker}")
+                                return False
                     elif response.status != 200:
                         logger.error(f"Failed to update watchlist item for {ticker}")
                         return False
-                    
-                    logger.info(f"Successfully updated watchlist item for {ticker}")
-                    return True
+
+            return True
 
         except Exception as e:
             logger.error(f"Error updating watchlist item for {ticker}: {e}")

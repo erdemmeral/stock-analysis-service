@@ -160,7 +160,7 @@ class TechnicalAnalyzer:
         }
 
     def _calculate_score(self, signals: Dict) -> Dict:
-        """Calculate weighted technical score with aligned thresholds"""
+        """Calculate weighted technical score with aligned thresholds and timeframe adjustments"""
         # RSI scoring aligned with buy conditions
         rsi = signals['momentum']['rsi']
         rsi_score = (
@@ -192,18 +192,59 @@ class TechnicalAnalyzer:
             'low': 0
         }[signals['volume']['profile']]
         
-        # Weighted final score with emphasis on trend
-        total_score = (
+        # Calculate base score with standard weights
+        base_score = (
             rsi_score * 0.3 +        # 30% weight
-            trend_score * 0.5 +      # 50% weight (increased)
+            trend_score * 0.5 +      # 50% weight
             volume_score * 0.2       # 20% weight
         )
         
+        # Apply timeframe-specific adjustments
+        timeframe_adjustments = {
+            'short': {
+                'momentum_weight': 0.4,    # Higher weight for momentum in short-term
+                'trend_weight': 0.4,
+                'volume_weight': 0.2,
+                'volatility_bonus': 5 if signals['volatility']['trend'] == 'decreasing' else -5
+            },
+            'medium': {
+                'momentum_weight': 0.3,    # Balanced weights for medium-term
+                'trend_weight': 0.5,
+                'volume_weight': 0.2,
+                'volatility_bonus': 3 if signals['volatility']['trend'] == 'stable' else -3
+            },
+            'long': {
+                'momentum_weight': 0.2,    # Higher weight for trend in long-term
+                'trend_weight': 0.6,
+                'volume_weight': 0.2,
+                'volatility_bonus': 2 if signals['volatility']['trend'] == 'stable' else -2
+            }
+        }
+        
+        # Get adjustments for current timeframe
+        adj = timeframe_adjustments[self.timeframe]
+        
+        # Calculate adjusted score
+        adjusted_score = (
+            rsi_score * adj['momentum_weight'] +
+            trend_score * adj['trend_weight'] +
+            volume_score * adj['volume_weight'] +
+            adj['volatility_bonus']
+        )
+        
+        # Ensure score is within 0-100 range
+        final_score = max(0, min(100, adjusted_score))
+        
         return {
-            'total': total_score,
+            'total': final_score,
             'momentum': rsi_score,
             'trend': trend_score,
-            'volume': volume_score
+            'volume': volume_score,
+            'timeframes': {
+                'short': final_score if self.timeframe == 'short' else None,
+                'medium': final_score if self.timeframe == 'medium' else None,
+                'long': final_score if self.timeframe == 'long' else None
+            }
         }
 
     def _calculate_volatility(self, hist: pd.DataFrame) -> Dict:
