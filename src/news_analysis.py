@@ -16,6 +16,7 @@ class NewsAnalyzer:
         self.model = AutoModelForSequenceClassification.from_pretrained("yiyanghkust/finbert-tone")
         self.labels = ['negative', 'neutral', 'positive']
         self.model.eval()  # Set to evaluation mode
+        self.processed_articles = {}  # Dict to track processed articles by ticker
         
     def analyze_article_sentiment(self, text: str) -> Dict:
         """Analyze sentiment of article text using FinBERT-tone"""
@@ -79,30 +80,70 @@ class NewsAnalyzer:
                 if datetime.fromtimestamp(article['providerPublishTime']) > cutoff_date
             ]
             
+            # Initialize processed articles for this ticker if not exists
+            if ticker not in self.processed_articles:
+                self.processed_articles[ticker] = set()
+            
             analyzed_news = []
             for article in recent_news:
                 try:
+                    # Generate unique article identifier
+                    article_id = f"{article['providerPublishTime']}_{article['title']}"
+                    
+                    # Skip if already processed
+                    if article_id in self.processed_articles[ticker]:
+                        continue
+                    
                     # Analyze sentiment using only the title
                     sentiment = self.analyze_article_sentiment(article['title'])
                     if not sentiment:
                         continue
                     
+                    # Add to processed articles
+                    self.processed_articles[ticker].add(article_id)
+                    
                     analyzed_news.append({
                         'title': article['title'],
                         'date': datetime.fromtimestamp(article['providerPublishTime']).strftime('%Y-%m-%d'),
                         'source': article.get('publisher', ''),
-                        'sentiment': sentiment
+                        'sentiment': sentiment,
+                        'article_id': article_id
                     })
                     
                 except Exception as e:
                     logger.warning(f"Error processing article {article['title']}: {e}")
                     continue
             
+            # Clean up old processed articles (older than 'days' parameter)
+            self._cleanup_old_articles(ticker, cutoff_date)
+            
+            # If we found new articles, log them
+            if analyzed_news:
+                logger.info(f"Found {len(analyzed_news)} new articles for {ticker}")
+                for article in analyzed_news:
+                    logger.info(f"New article: {article['date']} - {article['title']}")
+            
             return analyzed_news
             
         except Exception as e:
             logger.error(f"Error getting news for {ticker}: {e}")
             return []
+            
+    def _cleanup_old_articles(self, ticker: str, cutoff_date: datetime):
+        """Remove old articles from processed set"""
+        try:
+            if ticker in self.processed_articles:
+                # Extract timestamp from article_id and remove old ones
+                old_articles = {
+                    article_id for article_id in self.processed_articles[ticker]
+                    if datetime.fromtimestamp(float(article_id.split('_')[0])) < cutoff_date
+                }
+                self.processed_articles[ticker] -= old_articles
+                
+                if old_articles:
+                    logger.debug(f"Removed {len(old_articles)} old articles from {ticker}'s processed set")
+        except Exception as e:
+            logger.error(f"Error cleaning up old articles for {ticker}: {e}")
 
     def calculate_relevance(self, news_item: Dict) -> float:
         """Calculate relevance score for a news item"""
