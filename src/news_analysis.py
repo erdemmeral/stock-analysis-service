@@ -21,6 +21,7 @@ class NewsAnalyzer:
     def analyze_article_sentiment(self, text: str) -> Dict:
         """Analyze sentiment of article text using FinBERT-tone"""
         try:
+            logger.debug(f"Analyzing sentiment for text: {text[:100]}...")
             # Get model outputs
             inputs = self.tokenizer(text, return_tensors="pt", truncation=True, max_length=512)
             with torch.no_grad():
@@ -52,6 +53,8 @@ class NewsAnalyzer:
             # Ensure score is in 0-100 range
             final_score = max(0, min(100, final_score))
             
+            logger.debug(f"Sentiment analysis results - Class: {self.labels[predicted_class]}, Score: {final_score}, Confidence: {confidence}")
+            
             return {
                 'sentiment_score': final_score,
                 'label': 'negative' if final_score < 35 else 'positive' if final_score > 65 else 'neutral',
@@ -59,12 +62,13 @@ class NewsAnalyzer:
             }
             
         except Exception as e:
-            logger.error(f"Error in sentiment analysis: {e}")
+            logger.error(f"Error in sentiment analysis: {e}", exc_info=True)
             return None
 
     def get_stock_news(self, ticker: str, days: int = 30) -> List[Dict]:
         """Get recent news articles for a stock"""
         try:
+            logger.info(f"Fetching news for {ticker}...")
             # Use yf.Search instead of Ticker.news
             search = yf.Search(
                 query=ticker,
@@ -72,6 +76,7 @@ class NewsAnalyzer:
                 include_research=True
             )
             news = search.news
+            logger.info(f"Raw news count for {ticker}: {len(news) if news else 0}")
             
             # Filter for recent news
             cutoff_date = datetime.now() - timedelta(days=days)
@@ -79,54 +84,46 @@ class NewsAnalyzer:
                 article for article in news 
                 if datetime.fromtimestamp(article['providerPublishTime']) > cutoff_date
             ]
-            
-            # Initialize processed articles for this ticker if not exists
-            if ticker not in self.processed_articles:
-                self.processed_articles[ticker] = set()
+            logger.info(f"Recent news count for {ticker}: {len(recent_news)}")
             
             analyzed_news = []
             for article in recent_news:
                 try:
-                    # Generate unique article identifier
-                    article_id = f"{article['providerPublishTime']}_{article['title']}"
+                    # Combine title and content for sentiment analysis
+                    full_text = f"{article['title']} {article.get('summary', '')}"
+                    logger.debug(f"Analyzing text: {full_text[:100]}...")
                     
-                    # Skip if already processed
-                    if article_id in self.processed_articles[ticker]:
-                        continue
-                    
-                    # Analyze sentiment using only the title
-                    sentiment = self.analyze_article_sentiment(article['title'])
+                    sentiment = self.analyze_article_sentiment(full_text)
                     if not sentiment:
+                        logger.warning(f"Failed to get sentiment for article: {article['title']}")
                         continue
                     
-                    # Add to processed articles
-                    self.processed_articles[ticker].add(article_id)
+                    logger.info(f"Article sentiment: {sentiment['sentiment_score']} ({sentiment['label']})")
                     
                     analyzed_news.append({
                         'title': article['title'],
                         'date': datetime.fromtimestamp(article['providerPublishTime']).strftime('%Y-%m-%d'),
                         'source': article.get('publisher', ''),
                         'sentiment': sentiment,
-                        'article_id': article_id
+                        'link': article.get('link', '')
                     })
                     
                 except Exception as e:
                     logger.warning(f"Error processing article {article['title']}: {e}")
                     continue
             
-            # Clean up old processed articles (older than 'days' parameter)
-            self._cleanup_old_articles(ticker, cutoff_date)
-            
-            # If we found new articles, log them
+            # If we found articles, log them
             if analyzed_news:
-                logger.info(f"Found {len(analyzed_news)} new articles for {ticker}")
+                logger.info(f"Found {len(analyzed_news)} articles for {ticker}")
                 for article in analyzed_news:
-                    logger.info(f"New article: {article['date']} - {article['title']}")
+                    logger.info(f"Article: {article['date']} - {article['title']} - Score: {article['sentiment']['sentiment_score']}")
+            else:
+                logger.warning(f"No articles found for {ticker} after processing")
             
             return analyzed_news
             
         except Exception as e:
-            logger.error(f"Error getting news for {ticker}: {e}")
+            logger.error(f"Error getting news for {ticker}: {e}", exc_info=True)
             return []
             
     def _cleanup_old_articles(self, ticker: str, cutoff_date: datetime):
@@ -313,14 +310,17 @@ class NewsAnalyzer:
             
             # Get news data
             news_items = self.get_stock_news(ticker)
+            
+            # If no news found, check if it's a market hours issue
             if not news_items:
                 logger.warning(f"No news found for {ticker}")
                 return {
-                    'news_score': 50,
+                    'news_score': 50,  # Default to neutral
                     'sentiment': 'neutral',
                     'items': [],
                     'confidence': 'low',
-                    'article_count': 0
+                    'article_count': 0,
+                    'note': 'No recent news available'
                 }
             
             logger.info(f"Found {len(news_items)} news items for {ticker}")
@@ -349,52 +349,61 @@ class NewsAnalyzer:
                 processed_items.append({
                     'title': item['title'],
                     'date': item['date'],
-                    'source': item['source'],
-                    'sentiment': sentiment_data['sentiment_score'],
-                    'sentiment_label': sentiment_data['label'],
-                    'confidence': sentiment_data['confidence'],
+                    'sentiment': sentiment_data,
                     'relevance': relevance
                 })
             
-            # Sort by relevance and recency
-            processed_items.sort(key=lambda x: (x['relevance'], x['date']), reverse=True)
-            
-            # Calculate final weighted sentiment score (0-100)
+            # Calculate final weighted sentiment
             if total_relevance > 0:
-                weighted_sentiment = (total_sentiment / total_relevance)
-                # Ensure weighted_sentiment is in 0-100 range
-                weighted_sentiment = max(0, min(100, weighted_sentiment))
-                news_score = weighted_sentiment  # No need to scale, already in 0-100
+                final_sentiment = total_sentiment / total_relevance
             else:
-                news_score = 50
+                final_sentiment = 50  # Default to neutral if no relevant news
             
-            # Updated sentiment thresholds
-            if news_score >= 60:  # Lowered from 65
-                sentiment = 'positive'
-            elif news_score <= 40:  # Raised from 35
-                sentiment = 'negative'
+            # Determine overall sentiment label
+            if final_sentiment >= 65:
+                sentiment_label = 'positive'
+            elif final_sentiment <= 35:
+                sentiment_label = 'negative'
             else:
-                sentiment = 'neutral'
+                sentiment_label = 'neutral'
             
-            logger.info(f"News analysis complete for {ticker} - Score: {news_score:.2f}, Sentiment: {sentiment}")
+            # Sort items by date and relevance
+            processed_items.sort(key=lambda x: (x['date'], x['relevance']), reverse=True)
             
-            return {
-                'news_score': float(news_score),
-                'sentiment': sentiment,
-                'items': processed_items[:5],
-                'confidence': 'high' if len(processed_items) >= 5 else 'medium' if len(processed_items) >= 3 else 'low',
+            result = {
+                'news_score': float(final_sentiment),
+                'sentiment': sentiment_label,
+                'items': processed_items,
+                'confidence': 'high' if len(processed_items) >= 3 else 'medium' if len(processed_items) >= 1 else 'low',
                 'article_count': len(processed_items)
             }
             
+            logger.info(f"Analysis complete for {ticker} - Score: {result['news_score']:.2f}, Sentiment: {result['sentiment']}, Articles: {result['article_count']}")
+            return result
+            
         except Exception as e:
-            logger.error(f"Error analyzing news for {ticker}: {e}")
+            logger.error(f"Error in news analysis for {ticker}: {e}")
             return {
-                'news_score': 50,
+                'news_score': 50,  # Default to neutral on error
                 'sentiment': 'neutral',
                 'items': [],
-                'confidence': 'low',
-                'article_count': 0
+                'confidence': 'none',
+                'article_count': 0,
+                'error': str(e)
             }
+
+    def _get_last_known_sentiment(self, ticker: str) -> float:
+        """Get the last known sentiment for a ticker"""
+        try:
+            if ticker in self.processed_articles:
+                # Get the most recent article's sentiment
+                most_recent = max(self.processed_articles[ticker], 
+                                key=lambda x: float(x.split('_')[0]))
+                return float(most_recent.split('_')[2])  # Assuming we store sentiment in ID
+            return None
+        except Exception as e:
+            logger.error(f"Error getting last known sentiment for {ticker}: {e}")
+            return None
 
 def run_test_analysis():
     """Test function to verify news analysis"""
@@ -422,8 +431,8 @@ def run_test_analysis():
             print(f"\nTitle: {item['title']}")
             print(f"Date: {item['date']}")
             print(f"Source: {item['source']}")
-            print(f"Sentiment Label: {item['sentiment_label']}")
-            print(f"Sentiment Score: {item['sentiment']:.2f}")
+            print(f"Sentiment Label: {item['sentiment']['label']}")
+            print(f"Sentiment Score: {item['sentiment']['sentiment_score']:.2f}")
             print(f"Confidence: {item['confidence']:.2f}")
             print(f"Relevance Score: {item['relevance']:.2f}")
         

@@ -518,6 +518,7 @@ class AnalysisService:
 
             # Find best timeframe score
             best_score = max(technical_scores.values())
+            best_timeframe = max(technical_scores.items(), key=lambda x: x[1])[0]
             
             # Get news score
             news_score = news_analysis.get('news_score', 0)
@@ -534,20 +535,20 @@ class AnalysisService:
             # Position creation criteria:
             # 1. Best timeframe technical score > 60
             # 2. News score >= 40 (not too negative)
-            # 3. Good volume
-            # 4. Acceptable risk level
+            # 3. Good volume OR medium/long timeframe signal
+            # 4. Acceptable risk level OR strong fundamentals
             meets_criteria = (
                 best_score >= 60 and
                 news_score >= 40 and
-                has_good_volume and
-                risk_level != 'high' and
-                volatility_trend != 'increasing'
+                (has_good_volume or best_timeframe in ['medium', 'long']) and
+                (risk_level != 'high' or 
+                 (tech_analysis.get('fundamental_score', 0) > 80 and risk_level != 'extreme'))
             )
             
             if meets_criteria:
                 logger.info(f"Position creation criteria met: tech_score={best_score}, "
                           f"news_score={news_score}, volume={volume_profile}, "
-                          f"risk={risk_level}, vol_trend={volatility_trend}")
+                          f"risk={risk_level}, timeframe={best_timeframe}")
             
             return meets_criteria
             

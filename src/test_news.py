@@ -2,6 +2,15 @@ import unittest
 from news_analysis import NewsAnalyzer
 from datetime import datetime, timedelta
 import numpy as np
+import logging
+import sys
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    stream=sys.stdout
+)
 
 class TestNewsAnalyzer(unittest.TestCase):
     def setUp(self):
@@ -110,10 +119,43 @@ class TestNewsAnalyzer(unittest.TestCase):
         # Check confidence levels
         self.assertIn(result['confidence'], ['low', 'medium', 'high', 'error'])
 
+def test_news():
+    # Initialize analyzer
+    analyzer = NewsAnalyzer()
+    
+    # Test stock
+    ticker = "CRVS"
+    
+    # Get raw news first
+    news_items = analyzer.get_stock_news(ticker)
+    print(f"\nRaw news items found: {len(news_items)}")
+    
+    if news_items:
+        print("\nFirst few articles:")
+        for item in news_items[:3]:
+            print(f"\nTitle: {item['title']}")
+            print(f"Date: {item['date']}")
+            print(f"Sentiment: {item['sentiment']['sentiment_score']} ({item['sentiment']['label']})")
+    
+    # Get full analysis
+    result = analyzer.analyze_stock_news(ticker)
+    print(f"\nAnalysis Results:")
+    print(f"News count: {result.get('article_count', 0)}")
+    print(f"News score: {result.get('news_score', None)}")
+    print(f"Sentiment: {result.get('sentiment', None)}")
+    print(f"Confidence: {result.get('confidence', None)}")
+    
+    if result.get('items'):
+        print("\nProcessed articles:")
+        for item in result['items']:
+            print(f"\nTitle: {item['title']}")
+            print(f"Sentiment: {item['sentiment']['sentiment_score']} ({item['sentiment']['label']})")
+            print(f"Relevance: {item['relevance']}")
+
 def main():
     # Run tests
     print("\nStarting News Analysis Tests...")
     unittest.main(argv=[''], verbosity=2, exit=False)
 
 if __name__ == "__main__":
-    main() 
+    test_news() 
