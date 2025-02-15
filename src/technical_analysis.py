@@ -36,17 +36,32 @@ class TechnicalAnalyzer:
                 'long': 200    # 200 days for long-term
             }
             
+            # Get stock data once with maximum period needed
+            stock = yf.Ticker(ticker)
+            hist = stock.history(period='1y', interval='1d')  # Get 1 year of data
+            
+            if len(hist) < 30:  # Minimum required data
+                logger.warning(f"Insufficient data for {ticker}: {len(hist)} < 30 days")
+                return self.get_empty_analysis()
+            
+            # Analyze each timeframe with appropriate data slice
             for tf in ['short', 'medium', 'long']:
                 config = TIMEFRAME_CONFIGS[tf]
-                stock = yf.Ticker(ticker)
-                hist = stock.history(period=config['period'], interval=config['interval'])
+                
+                # Slice data according to timeframe
+                if tf == 'short':
+                    tf_hist = hist.tail(30)  # Last 30 days
+                elif tf == 'medium':
+                    tf_hist = hist.tail(90)  # Last 90 days
+                else:
+                    tf_hist = hist  # All data for long-term
                 
                 # Check minimum required periods
-                if len(hist) < min_periods[tf]:
-                    logger.warning(f"Insufficient data for {tf} timeframe: {len(hist)} < {min_periods[tf]}")
+                if len(tf_hist) < min_periods[tf]:
+                    logger.warning(f"Insufficient data for {tf} timeframe: {len(tf_hist)} < {min_periods[tf]}")
                     continue
                 
-                analysis = self._analyze_timeframe(hist, config)
+                analysis = self._analyze_timeframe(tf_hist, config)
                 analyses[tf] = analysis
                 timeframe_scores[tf] = analysis['technical_score']['total']
             
@@ -168,78 +183,134 @@ class TechnicalAnalyzer:
 
     def _calculate_score(self, signals: Dict, config: Dict) -> Dict:
         """Calculate weighted technical score with timeframe-specific adjustments"""
-        # RSI scoring
-        rsi = signals['momentum']['rsi']
-        rsi_score = (
-            90 if rsi < 35 else
-            80 if 35 <= rsi < 40 else
-            70 if 40 <= rsi < 45 else
-            60 if 45 <= rsi < 50 else
-            50 if 50 <= rsi < 55 else
-            40 if 55 <= rsi < 60 else
-            30 if 60 <= rsi < 65 else
-            20
-        )
-        
-        # Trend scoring
-        trend_score = {
-            'strong_bullish': 100,
-            'bullish': 75,
-            'neutral': 50,
-            'bearish': 25,
-            'strong_bearish': 0
-        }[signals['trend']['direction']]
-        
-        # Volume scoring
-        volume_score = {
-            'high': 100,
-            'increasing': 75,
-            'normal': 50,
-            'decreasing': 25,
-            'low': 0
-        }[signals['volume']['profile']]
-        
-        # Get timeframe-specific weights
-        period = config['period']
-        if period in ['1mo', '2mo']:  # Short-term
-            weights = {
-                'momentum': 0.4,
-                'trend': 0.4,
-                'volume': 0.2,
-                'volatility_bonus': 5 if signals['volatility']['trend'] == 'decreasing' else -5
+        try:
+            # RSI scoring with timeframe-specific thresholds
+            rsi = signals['momentum']['rsi']
+            period = config['period']
+            
+            # Adjust RSI thresholds based on timeframe
+            if period in ['1mo', '2mo']:  # Short-term
+                rsi_score = (
+                    90 if rsi < 30 else
+                    80 if 30 <= rsi < 35 else
+                    70 if 35 <= rsi < 40 else
+                    60 if 40 <= rsi < 45 else
+                    50 if 45 <= rsi < 55 else
+                    40 if 55 <= rsi < 60 else
+                    30 if 60 <= rsi < 65 else
+                    20
+                )
+            elif period == '6mo':  # Medium-term
+                rsi_score = (
+                    90 if rsi < 35 else
+                    80 if 35 <= rsi < 40 else
+                    70 if 40 <= rsi < 45 else
+                    60 if 45 <= rsi < 50 else
+                    50 if 50 <= rsi < 55 else
+                    40 if 55 <= rsi < 60 else
+                    30 if 60 <= rsi < 65 else
+                    20
+                )
+            else:  # Long-term
+                rsi_score = (
+                    90 if rsi < 40 else
+                    80 if 40 <= rsi < 45 else
+                    70 if 45 <= rsi < 50 else
+                    60 if 50 <= rsi < 55 else
+                    50 if 55 <= rsi < 60 else
+                    40 if 60 <= rsi < 65 else
+                    30 if 65 <= rsi < 70 else
+                    20
+                )
+            
+            # Trend scoring with timeframe-specific strength requirements
+            trend_data = signals['trend']
+            trend_strength = trend_data['strength']
+            
+            # Adjust trend thresholds based on timeframe
+            if period in ['1mo', '2mo']:  # Short-term needs stronger signals
+                strength_threshold = 0.6
+            elif period == '6mo':  # Medium-term moderate threshold
+                strength_threshold = 0.5
+            else:  # Long-term can work with weaker signals
+                strength_threshold = 0.4
+            
+            trend_score = {
+                'strong_bullish': 100 if trend_strength > strength_threshold else 80,
+                'bullish': 75 if trend_strength > strength_threshold else 60,
+                'neutral': 50,
+                'bearish': 25 if trend_strength > strength_threshold else 40,
+                'strong_bearish': 0 if trend_strength > strength_threshold else 20
+            }[trend_data['direction']]
+            
+            # Volume scoring with timeframe-specific profiles
+            volume_profile = signals['volume']['profile']
+            if period in ['1mo', '2mo']:  # Short-term needs higher volume
+                volume_score = {
+                    'high': 100,
+                    'increasing': 80,
+                    'normal': 60,
+                    'decreasing': 30,
+                    'low': 0
+                }[volume_profile]
+            else:  # Medium/Long term can work with moderate volume
+                volume_score = {
+                    'high': 90,
+                    'increasing': 75,
+                    'normal': 60,
+                    'decreasing': 40,
+                    'low': 20
+                }[volume_profile]
+            
+            # Get timeframe-specific weights
+            if period in ['1mo', '2mo']:  # Short-term
+                weights = {
+                    'momentum': 0.4,  # More weight on momentum
+                    'trend': 0.35,
+                    'volume': 0.25,   # Volume more important short-term
+                    'volatility_bonus': 5 if signals['volatility']['trend'] == 'decreasing' else -5
+                }
+            elif period == '6mo':  # Medium-term
+                weights = {
+                    'momentum': 0.35,
+                    'trend': 0.45,    # More weight on trend
+                    'volume': 0.20,
+                    'volatility_bonus': 3 if signals['volatility']['trend'] == 'stable' else -3
+                }
+            else:  # Long-term
+                weights = {
+                    'momentum': 0.25,
+                    'trend': 0.55,    # Much more weight on trend
+                    'volume': 0.20,
+                    'volatility_bonus': 2 if signals['volatility']['trend'] == 'stable' else -2
+                }
+            
+            # Calculate adjusted score
+            adjusted_score = (
+                rsi_score * weights['momentum'] +
+                trend_score * weights['trend'] +
+                volume_score * weights['volume'] +
+                weights['volatility_bonus']
+            )
+            
+            # Ensure score is within 0-100 range
+            final_score = max(0, min(100, adjusted_score))
+            
+            return {
+                'total': final_score,
+                'momentum': rsi_score,
+                'trend': trend_score,
+                'volume': volume_score
             }
-        elif period == '6mo':  # Medium-term
-            weights = {
-                'momentum': 0.3,
-                'trend': 0.5,
-                'volume': 0.2,
-                'volatility_bonus': 3 if signals['volatility']['trend'] == 'stable' else -3
+            
+        except Exception as e:
+            logger.error(f"Error calculating score: {e}")
+            return {
+                'total': 50,
+                'momentum': 50,
+                'trend': 50,
+                'volume': 50
             }
-        else:  # Long-term
-            weights = {
-                'momentum': 0.2,
-                'trend': 0.6,
-                'volume': 0.2,
-                'volatility_bonus': 2 if signals['volatility']['trend'] == 'stable' else -2
-            }
-        
-        # Calculate adjusted score
-        adjusted_score = (
-            rsi_score * weights['momentum'] +
-            trend_score * weights['trend'] +
-            volume_score * weights['volume'] +
-            weights['volatility_bonus']
-        )
-        
-        # Ensure score is within 0-100 range
-        final_score = max(0, min(100, adjusted_score))
-        
-        return {
-            'total': final_score,
-            'momentum': rsi_score,
-            'trend': trend_score,
-            'volume': volume_score
-        }
 
     def _calculate_volatility(self, hist: pd.DataFrame) -> Dict:
         """Calculate volatility metrics with rolling Z-score analysis"""
