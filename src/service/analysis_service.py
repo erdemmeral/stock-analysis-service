@@ -329,17 +329,33 @@ class AnalysisService:
                     logger.error(f"Error getting current price for {ticker}: {e}")
                     return False
 
-            # Prepare position data
+            # Calculate stop loss based on support levels and volatility
+            support_levels = tech_analysis.get('support_resistance', {}).get('support', [])
+            volatility = tech_analysis.get('signals', {}).get('volatility', {})
+            risk_level = volatility.get('risk_level', 'medium')
+            
+            # Calculate stop loss using nearest support level or percentage based on risk
+            if support_levels and len(support_levels) > 0:
+                nearest_support = max([s for s in support_levels if s < current_price], default=current_price * 0.95)
+                stop_loss = nearest_support
+            else:
+                # Default stop loss percentages based on risk level
+                stop_loss_pcts = {'low': 0.05, 'medium': 0.07, 'high': 0.10}
+                stop_pct = stop_loss_pcts.get(risk_level, 0.07)
+                stop_loss = current_price * (1 - stop_pct)
+
+            # Prepare position data with all required fields
             position_data = {
                 'ticker': ticker,
                 'entry_price': float(current_price),
                 'timeframe': best_timeframe,
+                'stop_loss': float(stop_loss),
                 'technical_score': float(timeframe_scores[best_timeframe]),
                 'news_score': float(news_analysis.get('news_score', 50)),
                 'support_levels': tech_analysis.get('support_resistance', {}).get('support', []),
                 'resistance_levels': tech_analysis.get('support_resistance', {}).get('resistance', []),
                 'trend': tech_analysis.get('signals', {}).get('trend', {}).get('direction', 'neutral'),
-                'risk_level': tech_analysis.get('signals', {}).get('volatility', {}).get('risk_level', 'medium'),
+                'risk_level': risk_level,
                 'status': 'active',
                 'created_at': datetime.now().isoformat()
             }
@@ -982,6 +998,21 @@ class AnalysisService:
     async def add_to_watchlist(self, ticker: str, watchlist_data: Dict) -> bool:
         """Add a stock to the watchlist"""
         try:
+            # Ensure required fields are present
+            if 'ticker' not in watchlist_data:
+                watchlist_data['ticker'] = ticker
+            
+            if 'fundamental_score' not in watchlist_data:
+                logger.error(f"Missing fundamental_score for {ticker}")
+                return False
+            
+            # Add additional required fields if missing
+            if 'last_updated' not in watchlist_data:
+                watchlist_data['last_updated'] = datetime.now().isoformat()
+            
+            if 'status' not in watchlist_data:
+                watchlist_data['status'] = 'new'
+
             async with aiohttp.ClientSession() as session:
                 # Check if already exists
                 check_url = f'{PORTFOLIO_API_URL}/watchlist/{ticker}'
@@ -992,7 +1023,8 @@ class AnalysisService:
                     # Update existing entry
                     async with session.patch(check_url, json=watchlist_data) as update_response:
                         if update_response.status != 200:
-                            logger.error(f"Failed to update watchlist entry for {ticker}")
+                            error_text = await update_response.text()
+                            logger.error(f"Failed to update watchlist entry for {ticker}. Error: {error_text}")
                             return False
                         logger.info(f"Updated existing watchlist entry for {ticker}")
                 else:
@@ -1000,7 +1032,8 @@ class AnalysisService:
                     create_url = f'{PORTFOLIO_API_URL}/watchlist'
                     async with session.post(create_url, json=watchlist_data) as create_response:
                         if create_response.status not in (200, 201):
-                            logger.error(f"Failed to create watchlist entry for {ticker}")
+                            error_text = await create_response.text()
+                            logger.error(f"Failed to create watchlist entry for {ticker}. Error: {error_text}")
                             return False
                         logger.info(f"Created new watchlist entry for {ticker}")
                 
