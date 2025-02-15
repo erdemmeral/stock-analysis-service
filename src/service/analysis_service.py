@@ -790,18 +790,38 @@ class AnalysisService:
             # Determine best timeframe based on highest technical score
             technical_scores = update_data.get('technical_scores', {})
             if technical_scores:
-                best_timeframe = max(technical_scores.items(), key=lambda x: x[1])[0]
-                best_score = technical_scores[best_timeframe]
+                # Sort by score and get the highest scoring timeframe
+                sorted_timeframes = sorted(technical_scores.items(), key=lambda x: x[1], reverse=True)
+                best_timeframe = sorted_timeframes[0][0]
+                best_score = sorted_timeframes[0][1]
+                
+                # Log timeframe scores for debugging
+                logger.info(f"Technical scores for {ticker}:")
+                for tf, score in sorted_timeframes:
+                    logger.info(f"{tf}: {score:.2f}")
             else:
-                best_timeframe = None
-                best_score = 0
+                best_timeframe = 'medium'  # Default to medium if no scores
+                best_score = update_data.get('technical_score', 0)
+                logger.warning(f"No timeframe scores for {ticker}, defaulting to medium")
 
-            # Get current price if not provided
+            # Get current price with multiple fallbacks
             current_price = update_data.get('current_price')
             if current_price is None or current_price == 0:
                 try:
+                    # Try yfinance first
                     stock = yf.Ticker(ticker)
-                    current_price = stock.info.get('regularMarketPrice', 0)
+                    current_price = stock.info.get('regularMarketPrice')
+                    
+                    # If that fails, try history
+                    if not current_price:
+                        hist = stock.history(period='1d')
+                        if not hist.empty:
+                            current_price = float(hist['Close'].iloc[-1])
+                    
+                    # If still no price, log warning
+                    if not current_price:
+                        logger.warning(f"Could not get current price for {ticker}")
+                        current_price = 0
                 except Exception as e:
                     logger.error(f"Error fetching current price for {ticker}: {e}")
                     current_price = 0
@@ -810,9 +830,16 @@ class AnalysisService:
             watchlist_data = {
                 **update_data,
                 "best_timeframe": best_timeframe,
-                "current_price": current_price,
-                "technical_score": best_score  # Use the score from best timeframe
+                "current_price": float(current_price) if current_price else 0.0,
+                "technical_score": best_score,  # Use the score from best timeframe
+                "last_updated": datetime.now().isoformat()
             }
+
+            # Log the update for debugging
+            logger.info(f"Updating watchlist for {ticker}:")
+            logger.info(f"Best Timeframe: {best_timeframe}")
+            logger.info(f"Technical Score: {best_score:.2f}")
+            logger.info(f"Current Price: {current_price}")
 
             async with aiohttp.ClientSession() as session:
                 async with session.patch(

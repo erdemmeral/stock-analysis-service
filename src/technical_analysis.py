@@ -84,20 +84,20 @@ class TechnicalAnalyzer:
             # Calculate indicators with proper NaN handling
             signals = {
                 'current_price': float(hist['Close'].iloc[-1]),
-                'momentum': self._calculate_momentum(hist),
-                'trend': self._calculate_trend(hist),
+                'momentum': self._calculate_momentum(hist, config['period']),  # Pass period
+                'trend': self._calculate_trend(hist, config['ma_short'], config['ma_long']),  # Pass MA periods
                 'volume': self._calculate_volume(hist),
-                'moving_averages': self._calculate_ma_signals(hist),
+                'moving_averages': self._calculate_ma_signals(hist, config),
                 'volatility': self._calculate_volatility(hist)
             }
             
             # Calculate support/resistance with dynamic windows
             volatility = signals['volatility']['daily']
-            window_size = max(20, int(20 * (1 + volatility)))  # Adjust window based on volatility
+            window_size = max(20, int(20 * (1 + volatility)))
             support_resistance = self._calculate_support_resistance(hist, window_size)
             
-            # Calculate technical score
-            technical_score = self._calculate_score(signals)
+            # Calculate technical score with timeframe-specific adjustments
+            technical_score = self._calculate_score(signals, config)
             
             return {
                 'signals': signals,
@@ -109,20 +109,45 @@ class TechnicalAnalyzer:
             logger.error(f"Error in timeframe analysis: {e}")
             return self.get_empty_analysis()
 
-    def _calculate_trend(self, hist: pd.DataFrame) -> Dict:
-        """Calculate trend indicators with proper NaN handling"""
-        # Calculate MACD
-        macd = ta.trend.MACD(hist['Close'])
+    def _calculate_momentum(self, hist: pd.DataFrame, period: str) -> Dict:
+        """Calculate momentum indicators with period-specific settings"""
+        # Adjust RSI period based on timeframe
+        rsi_period = 14 if period in ['1mo', '2mo'] else 21 if period == '6mo' else 30
+        rsi = ta.momentum.RSIIndicator(hist['Close'], window=rsi_period).rsi()
+        
+        # Stochastic with adjusted periods
+        stoch_period = 14 if period in ['1mo', '2mo'] else 21 if period == '6mo' else 30
+        stoch = ta.momentum.StochasticOscillator(
+            hist['High'], hist['Low'], hist['Close'],
+            window=stoch_period
+        )
+        
+        return {
+            'rsi': float(rsi.iloc[-1]),
+            'stochastic': {
+                'k': float(stoch.stoch().iloc[-1]),
+                'd': float(stoch.stoch_signal().iloc[-1])
+            }
+        }
+
+    def _calculate_trend(self, hist: pd.DataFrame, ma_short: int, ma_long: int) -> Dict:
+        """Calculate trend indicators with timeframe-specific MA periods"""
+        # Calculate MACD with adjusted periods
+        macd = ta.trend.MACD(
+            hist['Close'],
+            window_slow=ma_long,
+            window_fast=ma_short,
+            window_sign=9
+        )
         macd_line = macd.macd()
         signal_line = macd.macd_signal()
         
-        # Trim initial NaN periods instead of filling
+        # Trim initial NaN periods
         valid_index = macd_line.first_valid_index()
         if valid_index:
             macd_line = macd_line[valid_index:]
             signal_line = signal_line[valid_index:]
         
-        # Get latest values
         current_macd = float(macd_line.iloc[-1])
         current_signal = float(signal_line.iloc[-1])
         
@@ -141,40 +166,22 @@ class TechnicalAnalyzer:
             'macd_trend': 'bullish' if current_macd > current_signal else 'bearish'
         }
 
-    def _calculate_momentum(self, hist: pd.DataFrame) -> Dict:
-        """Calculate momentum indicators with aligned thresholds"""
-        # RSI with aligned thresholds
-        rsi = ta.momentum.RSIIndicator(hist['Close'], window=14).rsi()
-        
-        # Stochastic with proper period handling
-        stoch = ta.momentum.StochasticOscillator(
-            hist['High'], hist['Low'], hist['Close']
-        )
-        
-        return {
-            'rsi': float(rsi.iloc[-1]),
-            'stochastic': {
-                'k': float(stoch.stoch().iloc[-1]),
-                'd': float(stoch.stoch_signal().iloc[-1])
-            }
-        }
-
-    def _calculate_score(self, signals: Dict) -> Dict:
-        """Calculate weighted technical score with aligned thresholds and timeframe adjustments"""
-        # RSI scoring aligned with buy conditions
+    def _calculate_score(self, signals: Dict, config: Dict) -> Dict:
+        """Calculate weighted technical score with timeframe-specific adjustments"""
+        # RSI scoring
         rsi = signals['momentum']['rsi']
         rsi_score = (
-            90 if rsi < 35 else      # Strong buy (aligned with conditions)
-            80 if 35 <= rsi < 40 else # Buy zone
-            70 if 40 <= rsi < 45 else # Weak buy
-            60 if 45 <= rsi < 50 else # Slightly bullish
-            50 if 50 <= rsi < 55 else # Neutral
-            40 if 55 <= rsi < 60 else # Slightly bearish
-            30 if 60 <= rsi < 65 else # Weak sell
-            20                        # Strong sell
+            90 if rsi < 35 else
+            80 if 35 <= rsi < 40 else
+            70 if 40 <= rsi < 45 else
+            60 if 45 <= rsi < 50 else
+            50 if 50 <= rsi < 55 else
+            40 if 55 <= rsi < 60 else
+            30 if 60 <= rsi < 65 else
+            20
         )
         
-        # Trend scoring with higher weight for alignment
+        # Trend scoring
         trend_score = {
             'strong_bullish': 100,
             'bullish': 75,
@@ -192,44 +199,36 @@ class TechnicalAnalyzer:
             'low': 0
         }[signals['volume']['profile']]
         
-        # Calculate base score with standard weights
-        base_score = (
-            rsi_score * 0.3 +        # 30% weight
-            trend_score * 0.5 +      # 50% weight
-            volume_score * 0.2       # 20% weight
-        )
-        
-        # Apply timeframe-specific adjustments
-        timeframe_adjustments = {
-            'short': {
-                'momentum_weight': 0.4,    # Higher weight for momentum in short-term
-                'trend_weight': 0.4,
-                'volume_weight': 0.2,
+        # Get timeframe-specific weights
+        period = config['period']
+        if period in ['1mo', '2mo']:  # Short-term
+            weights = {
+                'momentum': 0.4,
+                'trend': 0.4,
+                'volume': 0.2,
                 'volatility_bonus': 5 if signals['volatility']['trend'] == 'decreasing' else -5
-            },
-            'medium': {
-                'momentum_weight': 0.3,    # Balanced weights for medium-term
-                'trend_weight': 0.5,
-                'volume_weight': 0.2,
+            }
+        elif period == '6mo':  # Medium-term
+            weights = {
+                'momentum': 0.3,
+                'trend': 0.5,
+                'volume': 0.2,
                 'volatility_bonus': 3 if signals['volatility']['trend'] == 'stable' else -3
-            },
-            'long': {
-                'momentum_weight': 0.2,    # Higher weight for trend in long-term
-                'trend_weight': 0.6,
-                'volume_weight': 0.2,
+            }
+        else:  # Long-term
+            weights = {
+                'momentum': 0.2,
+                'trend': 0.6,
+                'volume': 0.2,
                 'volatility_bonus': 2 if signals['volatility']['trend'] == 'stable' else -2
             }
-        }
-        
-        # Get adjustments for current timeframe
-        adj = timeframe_adjustments[self.timeframe]
         
         # Calculate adjusted score
         adjusted_score = (
-            rsi_score * adj['momentum_weight'] +
-            trend_score * adj['trend_weight'] +
-            volume_score * adj['volume_weight'] +
-            adj['volatility_bonus']
+            rsi_score * weights['momentum'] +
+            trend_score * weights['trend'] +
+            volume_score * weights['volume'] +
+            weights['volatility_bonus']
         )
         
         # Ensure score is within 0-100 range
@@ -239,12 +238,7 @@ class TechnicalAnalyzer:
             'total': final_score,
             'momentum': rsi_score,
             'trend': trend_score,
-            'volume': volume_score,
-            'timeframes': {
-                'short': final_score if self.timeframe == 'short' else None,
-                'medium': final_score if self.timeframe == 'medium' else None,
-                'long': final_score if self.timeframe == 'long' else None
-            }
+            'volume': volume_score
         }
 
     def _calculate_volatility(self, hist: pd.DataFrame) -> Dict:
@@ -305,10 +299,10 @@ class TechnicalAnalyzer:
             'value': float(recent_vol)
         }
 
-    def _calculate_ma_signals(self, hist: pd.DataFrame) -> Dict:
+    def _calculate_ma_signals(self, hist: pd.DataFrame, config: Dict) -> Dict:
         """Calculate moving averages"""
-        ma_short = ta.trend.SMAIndicator(hist['Close'], self.periods['ma_short']).sma_indicator()
-        ma_long = ta.trend.SMAIndicator(hist['Close'], self.periods['ma_long']).sma_indicator()
+        ma_short = ta.trend.SMAIndicator(hist['Close'], config['ma_short']).sma_indicator()
+        ma_long = ta.trend.SMAIndicator(hist['Close'], config['ma_long']).sma_indicator()
         
         current_short = float(ma_short.iloc[-1])
         current_long = float(ma_long.iloc[-1])
