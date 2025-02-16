@@ -10,6 +10,7 @@ class WatchlistUpdate(BaseModel):
     news_sentiment: str
     risk_level: str
     current_price: float = Field(ge=0)
+    fundamental_score: float = Field(ge=0, le=100, default=None)  # Make it optional with default None
 
     @validator('technical_scores')
     def validate_technical_scores(cls, v):

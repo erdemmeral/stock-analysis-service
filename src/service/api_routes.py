@@ -66,6 +66,14 @@ async def get_analysis(ticker: str):
 async def update_watchlist_item(ticker: str, update_data: WatchlistUpdate):
     """Update watchlist item with new analysis"""
     try:
+        # Get existing watchlist item to preserve fundamental score if needed
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"{PORTFOLIO_API_URL}/watchlist/{ticker}") as response:
+                if response.status == 200:
+                    existing_data = await response.json()
+                else:
+                    existing_data = {}
+
         # Updated schema to match new technical analysis structure
         watchlist_data = {
             "last_analysis": update_data.last_analysis,
@@ -77,6 +85,12 @@ async def update_watchlist_item(ticker: str, update_data: WatchlistUpdate):
             "current_price": update_data.current_price,
             "replace_scores": True  # Always replace scores instead of adding new ones
         }
+
+        # Preserve fundamental score if it exists
+        if update_data.fundamental_score is not None:
+            watchlist_data["fundamental_score"] = update_data.fundamental_score
+        elif 'fundamental_score' in existing_data:
+            watchlist_data["fundamental_score"] = existing_data["fundamental_score"]
         
         # Update using Portfolio API
         async with aiohttp.ClientSession() as session:

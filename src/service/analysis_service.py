@@ -851,6 +851,11 @@ class AnalysisService:
                     else:
                         existing_data = {}
 
+            # Preserve fundamental score if it exists and not in update data
+            fundamental_score = update_data.get('fundamental_score')
+            if fundamental_score is None and 'fundamental_score' in existing_data:
+                fundamental_score = existing_data['fundamental_score']
+
             # Ensure we have the technical scores - preserve existing if not in update
             technical_scores = update_data.get('technical_scores', existing_data.get('technical_scores', {}))
             if not technical_scores and 'technical_score' in update_data:
@@ -904,6 +909,10 @@ class AnalysisService:
                 'current_price': float(current_price) if current_price else float(existing_data.get('current_price', 0.0)),
                 'best_timeframe': best_timeframe
             }
+
+            # Add fundamental score if available
+            if fundamental_score is not None:
+                watchlist_data['fundamental_score'] = float(fundamental_score)
 
             # Log the update for debugging
             logger.info(f"Updating watchlist for {ticker}:")
