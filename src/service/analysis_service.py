@@ -205,13 +205,16 @@ class AnalysisService:
                                     logger.error(f"Failed to update watchlist item for {ticker} after {max_retries} attempts: {e}")
                         
                         # Check if we should create a position
-                        if self.should_create_position(tech_analysis, news_analysis):
+                        position_decision = self.should_create_position(tech_analysis, news_analysis)
+                        if position_decision['create']:
                             await self.handle_portfolio_addition(
                                 ticker,
                                 tech_analysis['technical_score']['total'],
                                 tech_analysis,
                                 news_analysis
                             )
+                        else:
+                            logger.info(f"Not creating position for {ticker}. Reasons: {', '.join(position_decision['reasons'])}")
                         
                         # Successfully processed this stock, break the retry loop
                         break
@@ -541,13 +544,14 @@ class AnalysisService:
         
         return "Multiple Technical Indicators"
 
-    def should_create_position(self, tech_analysis: Dict, news_analysis: Dict) -> bool:
+    def should_create_position(self, tech_analysis: Dict, news_analysis: Dict) -> Dict:
         """Determine if we should create a position based on technical and news analysis"""
         try:
+            reasons = []
             # Get technical scores for all timeframes
             technical_scores = tech_analysis.get('technical_score', {}).get('timeframes', {})
             if not technical_scores:
-                return False
+                return {'create': False, 'reasons': ['No technical scores available']}
 
             # Find best timeframe score
             best_score = max(technical_scores.values())
@@ -565,29 +569,48 @@ class AnalysisService:
             risk_level = volatility.get('risk_level', 'high')
             volatility_trend = volatility.get('trend', 'increasing')
             
-            # Position creation criteria:
-            # 1. Best timeframe technical score > 60
-            # 2. News score >= 40 (not too negative)
-            # 3. Good volume OR medium/long timeframe signal
-            # 4. Acceptable risk level OR strong fundamentals
-            meets_criteria = (
-                best_score >= 60 and
-                news_score >= 40 and
-                (has_good_volume or best_timeframe in ['medium', 'long']) and
-                (risk_level != 'high' or 
-                 (tech_analysis.get('fundamental_score', 0) > 80 and risk_level != 'extreme'))
-            )
+            # Check each criterion and add failure reasons
+            if best_score < 60:
+                reasons.append(f'Technical score too low: {best_score:.1f} < 60')
             
-            if meets_criteria:
+            if news_score < 40:
+                reasons.append(f'News sentiment too negative: {news_score:.1f} < 40')
+            
+            if not has_good_volume and best_timeframe not in ['medium', 'long']:
+                reasons.append(f'Insufficient volume ({volume_profile}) for {best_timeframe} timeframe')
+            
+            if risk_level == 'high':
+                fundamental_score = tech_analysis.get('fundamental_score', 0)
+                if fundamental_score <= 80:
+                    reasons.append(f'High risk ({risk_level}) with insufficient fundamental score: {fundamental_score:.1f} ≤ 80')
+            elif risk_level == 'extreme':
+                reasons.append(f'Extreme risk level: {risk_level}')
+            
+            # Additional checks for trend alignment
+            trend_direction = tech_analysis.get('signals', {}).get('trend', {}).get('direction', 'neutral')
+            if trend_direction in ['strong_bearish', 'bearish']:
+                reasons.append(f'Bearish trend detected: {trend_direction}')
+            
+            # Check momentum
+            rsi = tech_analysis.get('signals', {}).get('momentum', {}).get('rsi', 50)
+            if rsi > 70:
+                reasons.append(f'RSI overbought: {rsi:.1f} > 70')
+            elif rsi < 30:
+                reasons.append(f'RSI oversold: {rsi:.1f} < 30')
+            
+            # Log decision details
+            if not reasons:
                 logger.info(f"Position creation criteria met: tech_score={best_score}, "
                           f"news_score={news_score}, volume={volume_profile}, "
                           f"risk={risk_level}, timeframe={best_timeframe}")
-            
-            return meets_criteria
+                return {'create': True, 'reasons': ['All criteria met']}
+            else:
+                logger.info(f"Position creation criteria not met. Reasons: {', '.join(reasons)}")
+                return {'create': False, 'reasons': reasons}
             
         except Exception as e:
             logger.error(f"Error in should_create_position: {e}")
-            return False
+            return {'create': False, 'reasons': [f'Error: {str(e)}']}
 
     async def analyze_technical(self):
         """Run technical analysis on portfolio positions"""
@@ -820,13 +843,24 @@ class AnalysisService:
     async def update_watchlist_item(self, ticker: str, update_data: Dict) -> bool:
         """Update watchlist item with new analysis"""
         try:
-            # Ensure we have the technical scores
-            technical_scores = update_data.get('technical_scores', {})
+            # Get existing watchlist item data
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{PORTFOLIO_API_URL}/watchlist/{ticker}") as response:
+                    if response.status == 200:
+                        existing_data = await response.json()
+                    else:
+                        existing_data = {}
+
+            # Ensure we have the technical scores - preserve existing if not in update
+            technical_scores = update_data.get('technical_scores', existing_data.get('technical_scores', {}))
             if not technical_scores and 'technical_score' in update_data:
-                logger.warning(f"Converting single technical score to timeframe scores for {ticker}")
+                logger.info(f"Converting single technical score to timeframe scores for {ticker}")
                 technical_scores = {
                     'medium': float(update_data['technical_score'])
                 }
+            elif not technical_scores and 'technical_scores' in existing_data:
+                technical_scores = existing_data['technical_scores']
+                logger.info(f"Preserving existing technical scores for {ticker}")
 
             # Get best timeframe based on highest score
             if technical_scores:
@@ -841,8 +875,8 @@ class AnalysisService:
                     logger.info(f"{tf}: {score:.2f}")
             else:
                 logger.warning(f"No technical scores available for {ticker}")
-                best_timeframe = 'medium'
-                best_score = 0.0
+                best_timeframe = existing_data.get('best_timeframe', 'medium')
+                best_score = existing_data.get('technical_score', 0.0)
 
             # Get current price with multiple fallbacks
             current_price = update_data.get('current_price')
@@ -858,16 +892,16 @@ class AnalysisService:
                     logger.error(f"Error fetching current price for {ticker}: {e}")
                     current_price = 0.0
 
-            # Prepare watchlist data
+            # Prepare watchlist data - preserve existing values if not in update
             watchlist_data = {
                 'ticker': ticker,
                 'last_analysis': datetime.now().isoformat(),
                 'technical_score': best_score,
                 'technical_scores': technical_scores,
-                'news_score': float(update_data.get('news_score', 50)),
-                'news_sentiment': update_data.get('news_sentiment', 'neutral'),
-                'risk_level': update_data.get('risk_level', 'medium'),
-                'current_price': float(current_price) if current_price else 0.0,
+                'news_score': float(update_data.get('news_score', existing_data.get('news_score', 50))),
+                'news_sentiment': update_data.get('news_sentiment', existing_data.get('news_sentiment', 'neutral')),
+                'risk_level': update_data.get('risk_level', existing_data.get('risk_level', 'medium')),
+                'current_price': float(current_price) if current_price else float(existing_data.get('current_price', 0.0)),
                 'best_timeframe': best_timeframe
             }
 
@@ -982,7 +1016,8 @@ class AnalysisService:
                 await self.update_watchlist_item(ticker, update_data)
                 
                 # Check if we should create a position
-                if self.should_create_position(tech_analysis, news_analysis):
+                position_decision = self.should_create_position(tech_analysis, news_analysis)
+                if position_decision['create']:
                     await self.handle_portfolio_addition(
                         ticker,
                         tech_analysis['technical_score']['total'],
