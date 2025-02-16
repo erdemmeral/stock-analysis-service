@@ -604,6 +604,33 @@ class AnalysisService:
         
         return "Multiple Technical Indicators"
 
+    async def check_position_opportunity(self, ticker: str, news_analysis: Dict):
+        """Check if news creates a position opportunity"""
+        try:
+            # Run technical analysis to verify opportunity
+            tech_analysis = self.tech_analyzer.analyze_stock(ticker)
+            if not tech_analysis:
+                logger.warning(f"Could not get technical analysis for {ticker}")
+                return
+
+            # Add ticker to tech_analysis for should_create_position
+            tech_analysis['ticker'] = ticker
+            
+            # Check if we should create a position
+            position_decision = await self.should_create_position(tech_analysis, news_analysis)
+            if position_decision['create']:
+                await self.handle_portfolio_addition(
+                    ticker,
+                    tech_analysis['technical_score']['total'],
+                    tech_analysis,
+                    news_analysis
+                )
+            else:
+                logger.info(f"News opportunity for {ticker} did not meet position criteria: {position_decision['reasons']}")
+                
+        except Exception as e:
+            logger.error(f"Error checking position opportunity for {ticker}: {e}")
+
     async def should_create_position(self, tech_analysis: Dict, news_analysis: Dict) -> Dict:
         """Determine if we should create a position based on technical and news analysis"""
         try:
@@ -633,7 +660,7 @@ class AnalysisService:
                 return {'create': False, 'reasons': ['No technical scores available']}
 
             # Find best timeframe score, filtering out None values
-            valid_scores = {k: v for k, v in technical_scores.items() if v is not None}
+            valid_scores = {k: float(v) for k, v in technical_scores.items() if v is not None}
             if not valid_scores:
                 return {'create': False, 'reasons': ['No valid technical scores available']}
                 
@@ -641,23 +668,23 @@ class AnalysisService:
             best_timeframe = max(valid_scores.items(), key=lambda x: x[1])[0]
             
             # Log all scores for debugging
-            logger.info(f"Technical scores: {technical_scores}")
-            logger.info(f"Best score: {best_score} ({best_timeframe})")
+            logger.info(f"Technical scores for {ticker}: {technical_scores}")
+            logger.info(f"Best score for {ticker}: {best_score} ({best_timeframe})")
             
-            # Get news score
-            news_score = news_analysis.get('news_score', 0)
-            logger.info(f"News score: {news_score}")
+            # Get news score, ensure it's a float
+            news_score = float(news_analysis.get('news_score', 0))
+            logger.info(f"News score for {ticker}: {news_score}")
             
             # Check volume profile
             volume_profile = tech_analysis.get('signals', {}).get('volume', {}).get('profile', 'low')
             has_good_volume = volume_profile in ['high', 'increasing', 'normal']
-            logger.info(f"Volume profile: {volume_profile}")
+            logger.info(f"Volume profile for {ticker}: {volume_profile}")
             
             # Check volatility
             volatility = tech_analysis.get('signals', {}).get('volatility', {})
             risk_level = volatility.get('risk_level', 'high')
             volatility_trend = volatility.get('trend', 'increasing')
-            logger.info(f"Risk level: {risk_level}, Volatility trend: {volatility_trend}")
+            logger.info(f"Risk level for {ticker}: {risk_level}, Volatility trend: {volatility_trend}")
             
             # Check each criterion and add failure reasons
             if best_score < 60:
@@ -679,11 +706,14 @@ class AnalysisService:
                         async with session.get(f'{PORTFOLIO_API_URL}/watchlist/{ticker}') as response:
                             if response.status == 200:
                                 watchlist_data = await response.json()
-                                fundamental_score = watchlist_data.get('fundamental_score', 0)
-                                logger.info(f"Retrieved fundamental score from watchlist: {fundamental_score}")
+                                fundamental_score = float(watchlist_data.get('fundamental_score', 0))
+                                logger.info(f"Retrieved fundamental score from watchlist for {ticker}: {fundamental_score}")
                 except Exception as e:
-                    logger.error(f"Error fetching fundamental score from watchlist: {e}")
+                    logger.error(f"Error fetching fundamental score from watchlist for {ticker}: {e}")
                     fundamental_score = 0
+            
+            # Ensure fundamental_score is a float
+            fundamental_score = float(fundamental_score) if fundamental_score is not None else 0
             
             if risk_level == 'high':
                 if fundamental_score <= 80:
@@ -693,14 +723,14 @@ class AnalysisService:
             
             # Additional checks for trend alignment
             trend_direction = tech_analysis.get('signals', {}).get('trend', {}).get('direction', 'neutral')
-            logger.info(f"Trend direction: {trend_direction}")
+            logger.info(f"Trend direction for {ticker}: {trend_direction}")
             if trend_direction in ['strong_bearish', 'bearish']:
                 reasons.append(f'Bearish trend detected: {trend_direction}')
             
             # Check momentum
             momentum = tech_analysis.get('signals', {}).get('momentum', {})
-            rsi = momentum.get('rsi', 50) if momentum else 50
-            logger.info(f"RSI: {rsi}")
+            rsi = float(momentum.get('rsi', 50)) if momentum else 50
+            logger.info(f"RSI for {ticker}: {rsi}")
             if rsi > 70:
                 reasons.append(f'RSI overbought: {rsi:.1f} > 70')
             elif rsi < 30:
@@ -714,17 +744,17 @@ class AnalysisService:
             
             # Log decision details
             if not reasons:
-                logger.info(f"Position creation criteria met: tech_score={best_score}, "
+                logger.info(f"Position creation criteria met for {ticker}: tech_score={best_score}, "
                           f"news_score={news_score}, volume={volume_profile}, "
                           f"risk={risk_level}, timeframe={best_timeframe}, "
                           f"fundamental_score={fundamental_score}")
                 return {'create': True, 'reasons': ['All criteria met']}
             else:
-                logger.info(f"Position creation criteria not met. Reasons: {', '.join(reasons)}")
+                logger.info(f"Position creation criteria not met for {ticker}. Reasons: {', '.join(reasons)}")
                 return {'create': False, 'reasons': reasons}
             
         except Exception as e:
-            logger.error(f"Error in should_create_position: {e}")
+            logger.error(f"Error in should_create_position for {ticker}: {e}")
             return {'create': False, 'reasons': [f'Error: {str(e)}']}
 
     async def analyze_technical(self):
