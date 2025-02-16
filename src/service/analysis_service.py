@@ -256,8 +256,17 @@ class AnalysisService:
     async def run_analysis_loop(self):
         """Main analysis loop with different intervals"""
         try:
+            cleanup_interval = 3600  # Run cleanup every hour
+            last_cleanup = None
+            
             while True:
                 current_time = datetime.now()
+                
+                # Run cleanup every hour
+                if last_cleanup is None or (current_time - last_cleanup).total_seconds() >= cleanup_interval:
+                    logger.info("Running position cleanup...")
+                    await self.clean_up_positions()
+                    last_cleanup = current_time
                 
                 # Run fundamental analysis every 24 hours
                 if (self.last_fundamental_run is None or 
@@ -315,6 +324,19 @@ class AnalysisService:
     async def handle_portfolio_addition(self, ticker: str, score: float, tech_analysis: Dict, news_analysis: Dict):
         """Handle adding a position to the portfolio"""
         try:
+            # First check if stock is in watchlist
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{PORTFOLIO_API_URL}/watchlist/{ticker}") as response:
+                    if response.status != 200:
+                        logger.error(f"Cannot create position for {ticker}: Stock not in watchlist")
+                        return False
+                    watchlist_data = await response.json()
+                    
+            # Verify fundamental score exists
+            if not watchlist_data.get('fundamental_score'):
+                logger.error(f"Cannot create position for {ticker}: No fundamental score in watchlist")
+                return False
+
             # Determine best timeframe based on scores
             timeframe_scores = tech_analysis.get('technical_score', {}).get('timeframes', {})
             if not timeframe_scores:
@@ -335,6 +357,7 @@ class AnalysisService:
 
             # Calculate stop loss based on support levels and volatility
             support_levels = tech_analysis.get('support_resistance', {}).get('support', [])
+            resistance_levels = tech_analysis.get('support_resistance', {}).get('resistance', [])
             volatility = tech_analysis.get('signals', {}).get('volatility', {})
             risk_level = volatility.get('risk_level', 'medium')
             
@@ -348,18 +371,54 @@ class AnalysisService:
                 stop_pct = stop_loss_pcts.get(risk_level, 0.07)
                 stop_loss = current_price * (1 - stop_pct)
 
+            # Get trend information
+            trend_data = tech_analysis.get('signals', {}).get('trend', {})
+            trend_direction = trend_data.get('direction', 'neutral')
+            trend_strength = trend_data.get('strength', 50)
+            
+            # Get momentum indicators
+            momentum_data = tech_analysis.get('signals', {}).get('momentum', {})
+            rsi = momentum_data.get('rsi', 50)
+            macd_data = tech_analysis.get('signals', {}).get('indicators', {}).get('trend', {})
+            
+            # Get volume information
+            volume_data = tech_analysis.get('signals', {}).get('volume', {})
+            
+            # Calculate alignment score based on trend, momentum, and volume
+            alignment_factors = {
+                'trend_aligned': trend_direction in ['bullish', 'strong_bullish'],
+                'momentum_aligned': 40 <= rsi <= 60,
+                'volume_aligned': volume_data.get('profile') in ['high', 'increasing']
+            }
+            alignment_score = sum(1 for aligned in alignment_factors.values() if aligned) * 100 / 3
+
             # Prepare position data with all required fields
             position_data = {
                 'ticker': ticker,
                 'entry_price': float(current_price),
                 'timeframe': best_timeframe,
-                'stop_loss': float(stop_loss),
-                'technical_score': float(timeframe_scores[best_timeframe]),
+                'technical_scores': {
+                    tf: float(score) for tf, score in timeframe_scores.items()
+                },
                 'news_score': float(news_analysis.get('news_score', 50)),
-                'support_levels': tech_analysis.get('support_resistance', {}).get('support', []),
-                'resistance_levels': tech_analysis.get('support_resistance', {}).get('resistance', []),
-                'trend': tech_analysis.get('signals', {}).get('trend', {}).get('direction', 'neutral'),
+                'support_levels': support_levels[:3],  # Top 3 support levels
+                'resistance_levels': resistance_levels[:3],  # Top 3 resistance levels
+                'trend': {
+                    'direction': trend_direction,
+                    'strength': trend_strength,
+                    'alignment_score': alignment_score
+                },
+                'signals': {
+                    'rsi': float(rsi),
+                    'macd': {
+                        'value': float(macd_data.get('macd', 0)),
+                        'signal': macd_data.get('signal', 'neutral')
+                    },
+                    'volume_profile': volume_data.get('profile', 'normal'),
+                    'predicted_move': float(tech_analysis.get('predictions', {}).get('predicted_change_percent', 0))
+                },
                 'risk_level': risk_level,
+                'stop_loss': float(stop_loss),
                 'status': 'active',
                 'created_at': datetime.now().isoformat()
             }
@@ -548,6 +607,24 @@ class AnalysisService:
     async def should_create_position(self, tech_analysis: Dict, news_analysis: Dict) -> Dict:
         """Determine if we should create a position based on technical and news analysis"""
         try:
+            # Get ticker from tech_analysis
+            ticker = tech_analysis.get('ticker')
+            if not ticker:
+                return {'create': False, 'reasons': ['No ticker provided in analysis']}
+            
+            # Check if position already exists
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f'{PORTFOLIO_API_URL}/positions/{ticker}') as response:
+                        if response.status == 200:
+                            position_data = await response.json()
+                            if position_data.get('status') == 'active':
+                                logger.info(f"Position already exists for {ticker}")
+                                return {'create': False, 'reasons': ['Position already exists']}
+            except Exception as e:
+                logger.error(f"Error checking existing position for {ticker}: {e}")
+                return {'create': False, 'reasons': [f'Error checking position: {str(e)}']}
+            
             reasons = []
             
             # Get technical scores for all timeframes
@@ -593,7 +670,6 @@ class AnalysisService:
                 reasons.append(f'Insufficient volume ({volume_profile}) for {best_timeframe} timeframe')
             
             # Get fundamental score from watchlist if not in tech_analysis
-            ticker = tech_analysis.get('ticker')
             fundamental_score = tech_analysis.get('fundamental_score')
             
             if fundamental_score is None and ticker:
@@ -1148,3 +1224,39 @@ class AnalysisService:
         except Exception as e:
             logger.error(f"Error adding {ticker} to watchlist: {e}")
             return False
+
+    async def clean_up_positions(self):
+        """Clean up positions that don't have corresponding watchlist entries"""
+        try:
+            # Get all active positions
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{PORTFOLIO_API_URL}/positions") as response:
+                    if response.status != 200:
+                        logger.error("Failed to get positions for cleanup")
+                        return
+                    positions = await response.json()
+                
+                # Get watchlist
+                async with session.get(f"{PORTFOLIO_API_URL}/watchlist") as response:
+                    if response.status != 200:
+                        logger.error("Failed to get watchlist for cleanup")
+                        return
+                    watchlist = await response.json()
+                    
+                # Create set of watchlist tickers for faster lookup
+                watchlist_tickers = {item['ticker'] for item in watchlist}
+                
+                # Check each position
+                for position in positions:
+                    ticker = position['ticker']
+                    if ticker not in watchlist_tickers:
+                        logger.warning(f"Found position for {ticker} but not in watchlist. Closing position.")
+                        # Close the position
+                        await self._close_position(ticker, {
+                            'status': 'closed',
+                            'exit_reason': 'watchlist_cleanup',
+                            'exit_date': datetime.now().isoformat()
+                        })
+                        
+        except Exception as e:
+            logger.error(f"Error in position cleanup: {e}")
