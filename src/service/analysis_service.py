@@ -90,25 +90,26 @@ class AnalysisService:
                         # Check if stock exists in watchlist
                         check_response = await session.get(f'{PORTFOLIO_API_URL}/watchlist/{stock["ticker"]}')
                         
+                        watchlist_data = {
+                            'ticker': stock['ticker'],
+                            'fundamental_score': float(stock['score']),  # Ensure it's a float
+                            'last_analysis': datetime.now().isoformat(),
+                            'status': 'active'
+                        }
+                        
                         if check_response.status == 200:
                             # Update existing stock
-                            logger.info(f"Updating {stock['ticker']} in watchlist")
+                            logger.info(f"Updating {stock['ticker']} in watchlist with score {stock['score']}")
                             await session.patch(
                                 f'{PORTFOLIO_API_URL}/watchlist/{stock["ticker"]}',
-                                json={
-                                    'fundamental_score': stock['score'],
-                                    'notes': f"Fundamental analysis updated: {datetime.now().isoformat()}"
-                                }
+                                json=watchlist_data
                             )
                         else:
                             # Add new stock
-                            logger.info(f"Adding {stock['ticker']} to watchlist")
+                            logger.info(f"Adding {stock['ticker']} to watchlist with score {stock['score']}")
                             await session.post(
                                 f'{PORTFOLIO_API_URL}/watchlist',
-                                json={
-                                    'ticker': stock['ticker'],
-                                    'fundamental_score': stock['score']
-                                }
+                                json=watchlist_data
                             )
                     except Exception as e:
                         logger.error(f"Error processing {stock['ticker']}: {e}")
@@ -205,7 +206,7 @@ class AnalysisService:
                                     logger.error(f"Failed to update watchlist item for {ticker} after {max_retries} attempts: {e}")
                         
                         # Check if we should create a position
-                        position_decision = self.should_create_position(tech_analysis, news_analysis)
+                        position_decision = await self.should_create_position(tech_analysis, news_analysis)
                         if position_decision['create']:
                             await self.handle_portfolio_addition(
                                 ticker,
@@ -544,7 +545,7 @@ class AnalysisService:
         
         return "Multiple Technical Indicators"
 
-    def should_create_position(self, tech_analysis: Dict, news_analysis: Dict) -> Dict:
+    async def should_create_position(self, tech_analysis: Dict, news_analysis: Dict) -> Dict:
         """Determine if we should create a position based on technical and news analysis"""
         try:
             reasons = []
@@ -591,8 +592,24 @@ class AnalysisService:
             if not has_good_volume and best_timeframe not in ['medium', 'long']:
                 reasons.append(f'Insufficient volume ({volume_profile}) for {best_timeframe} timeframe')
             
+            # Get fundamental score from watchlist if not in tech_analysis
+            ticker = tech_analysis.get('ticker')
+            fundamental_score = tech_analysis.get('fundamental_score')
+            
+            if fundamental_score is None and ticker:
+                try:
+                    # Fetch from watchlist API
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get(f'{PORTFOLIO_API_URL}/watchlist/{ticker}') as response:
+                            if response.status == 200:
+                                watchlist_data = await response.json()
+                                fundamental_score = watchlist_data.get('fundamental_score', 0)
+                                logger.info(f"Retrieved fundamental score from watchlist: {fundamental_score}")
+                except Exception as e:
+                    logger.error(f"Error fetching fundamental score from watchlist: {e}")
+                    fundamental_score = 0
+            
             if risk_level == 'high':
-                fundamental_score = tech_analysis.get('fundamental_score', 0)
                 if fundamental_score <= 80:
                     reasons.append(f'High risk ({risk_level}) with insufficient fundamental score: {fundamental_score:.1f} ≤ 80')
             elif risk_level == 'extreme':
@@ -623,7 +640,8 @@ class AnalysisService:
             if not reasons:
                 logger.info(f"Position creation criteria met: tech_score={best_score}, "
                           f"news_score={news_score}, volume={volume_profile}, "
-                          f"risk={risk_level}, timeframe={best_timeframe}")
+                          f"risk={risk_level}, timeframe={best_timeframe}, "
+                          f"fundamental_score={fundamental_score}")
                 return {'create': True, 'reasons': ['All criteria met']}
             else:
                 logger.info(f"Position creation criteria not met. Reasons: {', '.join(reasons)}")
@@ -959,6 +977,9 @@ class AnalysisService:
                     watchlist_data['fundamental_score'] = float(fundamental_score)
                 except (ValueError, TypeError):
                     logger.warning(f"Invalid fundamental score for {ticker}: {fundamental_score}")
+            elif not existing_data:  # If this is a new item and no fundamental score
+                logger.error(f"Cannot create watchlist item for {ticker}: fundamental_score is required")
+                return False
 
             # Log the update for debugging
             logger.info(f"Updating watchlist for {ticker}:")
@@ -1066,7 +1087,7 @@ class AnalysisService:
                 await self.update_watchlist_item(ticker, update_data)
                 
                 # Check if we should create a position
-                position_decision = self.should_create_position(tech_analysis, news_analysis)
+                position_decision = await self.should_create_position(tech_analysis, news_analysis)
                 if position_decision['create']:
                     await self.handle_portfolio_addition(
                         ticker,
