@@ -548,26 +548,38 @@ class AnalysisService:
         """Determine if we should create a position based on technical and news analysis"""
         try:
             reasons = []
+            
             # Get technical scores for all timeframes
             technical_scores = tech_analysis.get('technical_score', {}).get('timeframes', {})
             if not technical_scores:
                 return {'create': False, 'reasons': ['No technical scores available']}
 
-            # Find best timeframe score
-            best_score = max(technical_scores.values())
-            best_timeframe = max(technical_scores.items(), key=lambda x: x[1])[0]
+            # Find best timeframe score, filtering out None values
+            valid_scores = {k: v for k, v in technical_scores.items() if v is not None}
+            if not valid_scores:
+                return {'create': False, 'reasons': ['No valid technical scores available']}
+                
+            best_score = max(valid_scores.values())
+            best_timeframe = max(valid_scores.items(), key=lambda x: x[1])[0]
+            
+            # Log all scores for debugging
+            logger.info(f"Technical scores: {technical_scores}")
+            logger.info(f"Best score: {best_score} ({best_timeframe})")
             
             # Get news score
             news_score = news_analysis.get('news_score', 0)
+            logger.info(f"News score: {news_score}")
             
             # Check volume profile
             volume_profile = tech_analysis.get('signals', {}).get('volume', {}).get('profile', 'low')
             has_good_volume = volume_profile in ['high', 'increasing', 'normal']
+            logger.info(f"Volume profile: {volume_profile}")
             
             # Check volatility
             volatility = tech_analysis.get('signals', {}).get('volatility', {})
             risk_level = volatility.get('risk_level', 'high')
             volatility_trend = volatility.get('trend', 'increasing')
+            logger.info(f"Risk level: {risk_level}, Volatility trend: {volatility_trend}")
             
             # Check each criterion and add failure reasons
             if best_score < 60:
@@ -588,15 +600,24 @@ class AnalysisService:
             
             # Additional checks for trend alignment
             trend_direction = tech_analysis.get('signals', {}).get('trend', {}).get('direction', 'neutral')
+            logger.info(f"Trend direction: {trend_direction}")
             if trend_direction in ['strong_bearish', 'bearish']:
                 reasons.append(f'Bearish trend detected: {trend_direction}')
             
             # Check momentum
-            rsi = tech_analysis.get('signals', {}).get('momentum', {}).get('rsi', 50)
+            momentum = tech_analysis.get('signals', {}).get('momentum', {})
+            rsi = momentum.get('rsi', 50) if momentum else 50
+            logger.info(f"RSI: {rsi}")
             if rsi > 70:
                 reasons.append(f'RSI overbought: {rsi:.1f} > 70')
             elif rsi < 30:
                 reasons.append(f'RSI oversold: {rsi:.1f} < 30')
+            
+            # Check if we have enough timeframe data
+            required_timeframes = ['short', 'medium']
+            missing_timeframes = [tf for tf in required_timeframes if tf not in valid_scores]
+            if missing_timeframes:
+                reasons.append(f'Missing required timeframe data: {", ".join(missing_timeframes)}')
             
             # Log decision details
             if not reasons:
@@ -856,34 +877,40 @@ class AnalysisService:
             if fundamental_score is None and 'fundamental_score' in existing_data:
                 fundamental_score = existing_data['fundamental_score']
 
-            # Ensure we have the technical scores - preserve existing if not in update
+            # Handle technical scores safely
             technical_scores = update_data.get('technical_scores', existing_data.get('technical_scores', {}))
             if not technical_scores and 'technical_score' in update_data:
                 logger.info(f"Converting single technical score to timeframe scores for {ticker}")
                 technical_scores = {
-                    'medium': float(update_data['technical_score'])
+                    'medium': update_data['technical_score']
                 }
             elif not technical_scores and 'technical_scores' in existing_data:
                 technical_scores = existing_data['technical_scores']
                 logger.info(f"Preserving existing technical scores for {ticker}")
 
-            # Get best timeframe based on highest score
-            if technical_scores:
-                # Sort by score and get the highest scoring timeframe
-                sorted_timeframes = sorted(technical_scores.items(), key=lambda x: float(x[1]), reverse=True)
-                best_timeframe = sorted_timeframes[0][0]
-                best_score = float(sorted_timeframes[0][1])
-                
-                # Log timeframe scores for debugging
-                logger.info(f"Technical scores for {ticker}:")
-                for tf, score in sorted_timeframes:
-                    logger.info(f"{tf}: {score:.2f}")
-            else:
-                logger.warning(f"No technical scores available for {ticker}")
-                best_timeframe = existing_data.get('best_timeframe', 'medium')
-                best_score = existing_data.get('technical_score', 0.0)
+            # Convert technical scores to float safely
+            safe_technical_scores = {}
+            for tf, score in technical_scores.items():
+                try:
+                    if score is not None:
+                        safe_technical_scores[tf] = float(score)
+                    else:
+                        safe_technical_scores[tf] = None
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid technical score for {ticker} {tf}: {score}")
+                    safe_technical_scores[tf] = None
 
-            # Get current price with multiple fallbacks
+            # Get best timeframe based on highest score, excluding None values
+            valid_scores = {k: v for k, v in safe_technical_scores.items() if v is not None}
+            if valid_scores:
+                best_timeframe, best_score = max(valid_scores.items(), key=lambda x: x[1])
+                logger.info(f"Best timeframe for {ticker}: {best_timeframe} with score {best_score}")
+            else:
+                best_timeframe = existing_data.get('best_timeframe', 'medium')
+                best_score = None
+                logger.warning(f"No valid technical scores for {ticker}, using existing timeframe: {best_timeframe}")
+
+            # Handle current price safely
             current_price = update_data.get('current_price')
             if current_price is None or current_price == 0:
                 try:
@@ -895,58 +922,72 @@ class AnalysisService:
                             current_price = float(hist['Close'].iloc[-1])
                 except Exception as e:
                     logger.error(f"Error fetching current price for {ticker}: {e}")
-                    current_price = 0.0
+                    current_price = None
 
-            # Prepare watchlist data - preserve existing values if not in update
+            # Prepare watchlist data with safe conversions
             watchlist_data = {
                 'ticker': ticker,
                 'last_analysis': datetime.now().isoformat(),
-                'technical_score': best_score,
-                'technical_scores': technical_scores,
-                'news_score': float(update_data.get('news_score', existing_data.get('news_score', 50))),
-                'news_sentiment': update_data.get('news_sentiment', existing_data.get('news_sentiment', 'neutral')),
-                'risk_level': update_data.get('risk_level', existing_data.get('risk_level', 'medium')),
-                'current_price': float(current_price) if current_price else float(existing_data.get('current_price', 0.0)),
+                'technical_scores': safe_technical_scores,
                 'best_timeframe': best_timeframe
             }
 
+            # Add optional fields only if they have valid values
+            if best_score is not None:
+                watchlist_data['technical_score'] = best_score
+
+            if current_price is not None:
+                watchlist_data['current_price'] = current_price
+
+            # Handle news score safely
+            try:
+                news_score = update_data.get('news_score', existing_data.get('news_score'))
+                if news_score is not None:
+                    watchlist_data['news_score'] = float(news_score)
+            except (ValueError, TypeError):
+                logger.warning(f"Invalid news score for {ticker}: {news_score}")
+
+            # Add other fields with safe defaults
+            watchlist_data.update({
+                'news_sentiment': update_data.get('news_sentiment', existing_data.get('news_sentiment', 'neutral')),
+                'risk_level': update_data.get('risk_level', existing_data.get('risk_level', 'medium'))
+            })
+
             # Add fundamental score if available
             if fundamental_score is not None:
-                watchlist_data['fundamental_score'] = float(fundamental_score)
+                try:
+                    watchlist_data['fundamental_score'] = float(fundamental_score)
+                except (ValueError, TypeError):
+                    logger.warning(f"Invalid fundamental score for {ticker}: {fundamental_score}")
 
             # Log the update for debugging
             logger.info(f"Updating watchlist for {ticker}:")
+            logger.info(f"Technical Scores: {safe_technical_scores}")
             logger.info(f"Best Timeframe: {best_timeframe}")
-            logger.info(f"Technical Score: {best_score:.2f}")
             logger.info(f"Current Price: {current_price}")
 
-            # Try to update first
+            # Update or create watchlist item
             async with aiohttp.ClientSession() as session:
-                try:
+                if existing_data:
                     async with session.patch(
                         f"{PORTFOLIO_API_URL}/watchlist/{ticker}",
                         json=watchlist_data
                     ) as response:
-                        if response.status == 404:
-                            # If item doesn't exist, create it
-                            async with session.post(
-                                f"{PORTFOLIO_API_URL}/watchlist",
-                                json=watchlist_data
-                            ) as create_response:
-                                if create_response.status not in (200, 201):
-                                    error_text = await create_response.text()
-                                    logger.error(f"Failed to create watchlist item for {ticker}. Status: {create_response.status}, Error: {error_text}")
-                                    return False
-                                logger.info(f"Created new watchlist item for {ticker}")
-                        elif response.status != 200:
+                        if response.status != 200:
                             error_text = await response.text()
                             logger.error(f"Failed to update watchlist item for {ticker}. Status: {response.status}, Error: {error_text}")
                             return False
-                        else:
-                            logger.info(f"Successfully updated watchlist item for {ticker}")
-                except Exception as e:
-                    logger.error(f"API call error for {ticker}: {e}")
-                    return False
+                        logger.info(f"Successfully updated watchlist item for {ticker}")
+                else:
+                    async with session.post(
+                        f"{PORTFOLIO_API_URL}/watchlist",
+                        json=watchlist_data
+                    ) as response:
+                        if response.status not in (200, 201):
+                            error_text = await response.text()
+                            logger.error(f"Failed to create watchlist item for {ticker}. Status: {response.status}, Error: {error_text}")
+                            return False
+                        logger.info(f"Created new watchlist item for {ticker}")
 
             return True
 
