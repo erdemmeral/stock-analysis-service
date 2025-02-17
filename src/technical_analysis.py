@@ -42,7 +42,9 @@ class TechnicalAnalyzer:
             
             if len(hist) < 30:  # Minimum required data
                 logger.warning(f"Insufficient data for {ticker}: {len(hist)} < 30 days")
-                return self.get_empty_analysis()
+                empty_analysis = self.get_empty_analysis()
+                empty_analysis['ticker'] = ticker
+                return empty_analysis
             
             # Analyze each timeframe with appropriate data slice
             for tf in ['short', 'medium', 'long']:
@@ -66,7 +68,9 @@ class TechnicalAnalyzer:
                 timeframe_scores[tf] = analysis['technical_score']['total']
             
             if not analyses:
-                return self.get_empty_analysis()
+                empty_analysis = self.get_empty_analysis()
+                empty_analysis['ticker'] = ticker
+                return empty_analysis
             
             # Get the primary timeframe analysis
             primary_analysis = analyses.get(self.timeframe, analyses['medium'])
@@ -87,11 +91,16 @@ class TechnicalAnalyzer:
                 'timeframes': timeframe_scores
             })
             
+            # Add ticker to analysis
+            primary_analysis['ticker'] = ticker
+            
             return primary_analysis
 
         except Exception as e:
             logger.error(f"Error analyzing {ticker}: {e}")
-            return self.get_empty_analysis()
+            empty_analysis = self.get_empty_analysis()
+            empty_analysis['ticker'] = ticker
+            return empty_analysis
 
     def _analyze_timeframe(self, hist: pd.DataFrame, config: Dict) -> Dict:
         """Analyze a single timeframe with improved signal handling"""

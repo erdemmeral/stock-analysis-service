@@ -1114,7 +1114,7 @@ class AnalysisService:
                             error_text = await response.text()
                             logger.error(f"Failed to create watchlist item for {ticker}. Status: {response.status}, Error: {error_text}")
                             return False
-                        logger.info(f"Created new watchlist item for {ticker}")
+                        logger.info(f"Created new watchlist entry for {ticker}")
 
             return True
 
@@ -1136,6 +1136,8 @@ class AnalysisService:
                 try:
                     tech_analysis = self.tech_analyzer.analyze_stock(ticker)
                     if tech_analysis and 'technical_score' in tech_analysis:
+                        # Add ticker to tech_analysis
+                        tech_analysis['ticker'] = ticker
                         break
                 except Exception as e:
                     retry_count += 1
