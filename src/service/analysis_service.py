@@ -18,6 +18,7 @@ from ..config import (
     TRAILING_STOP
 )
 import yfinance as yf
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -266,6 +267,7 @@ class AnalysisService:
                 if last_cleanup is None or (current_time - last_cleanup).total_seconds() >= cleanup_interval:
                     logger.info("Running position cleanup...")
                     await self.clean_up_positions()
+                    await self.clean_up_duplicate_positions()
                     last_cleanup = current_time
                 
                 # Run fundamental analysis every 24 hours
@@ -639,18 +641,34 @@ class AnalysisService:
             if not ticker:
                 return {'create': False, 'reasons': ['No ticker provided in analysis']}
             
-            # Check if position already exists
+            # Check if position already exists - More robust check
             try:
                 async with aiohttp.ClientSession() as session:
-                    async with session.get(f'{PORTFOLIO_API_URL}/positions/{ticker}') as response:
+                    # First check active positions
+                    async with session.get(f'{PORTFOLIO_API_URL}/positions') as response:
                         if response.status == 200:
-                            position_data = await response.json()
-                            if position_data.get('status') == 'active':
-                                logger.info(f"Position already exists for {ticker}")
-                                return {'create': False, 'reasons': ['Position already exists']}
+                            positions = await response.json()
+                            # Check for any active position with this ticker
+                            for position in positions:
+                                if position.get('ticker') == ticker and position.get('status') == 'active':
+                                    logger.info(f"Active position already exists for {ticker}")
+                                    return {'create': False, 'reasons': ['Position already exists']}
+                        else:
+                            logger.error(f"Error checking positions. Status: {response.status}")
+                            return {'create': False, 'reasons': ['Error checking existing positions']}
+                    
+                    # Also check pending positions
+                    async with session.get(f'{PORTFOLIO_API_URL}/positions/pending') as response:
+                        if response.status == 200:
+                            pending = await response.json()
+                            # Check for any pending position with this ticker
+                            for position in pending:
+                                if position.get('ticker') == ticker:
+                                    logger.info(f"Pending position already exists for {ticker}")
+                                    return {'create': False, 'reasons': ['Pending position exists']}
             except Exception as e:
-                logger.error(f"Error checking existing position for {ticker}: {e}")
-                return {'create': False, 'reasons': [f'Error checking position: {str(e)}']}
+                logger.error(f"Error checking existing positions for {ticker}: {e}")
+                return {'create': False, 'reasons': [f'Error checking positions: {str(e)}']}
             
             reasons = []
             
@@ -1292,3 +1310,47 @@ class AnalysisService:
                         
         except Exception as e:
             logger.error(f"Error in position cleanup: {e}")
+
+    async def clean_up_duplicate_positions(self):
+        """Clean up any duplicate positions for the same ticker"""
+        try:
+            # Get all positions
+            async with aiohttp.ClientSession() as session:
+                async with session.get(f"{PORTFOLIO_API_URL}/positions") as response:
+                    if response.status != 200:
+                        logger.error("Failed to get positions for duplicate cleanup")
+                        return
+                    positions = await response.json()
+                
+                # Track positions by ticker
+                ticker_positions = {}
+                for position in positions:
+                    ticker = position.get('ticker')
+                    if not ticker:
+                        continue
+                        
+                    if ticker not in ticker_positions:
+                        ticker_positions[ticker] = []
+                    ticker_positions[ticker].append(position)
+                
+                # Check for duplicates
+                for ticker, pos_list in ticker_positions.items():
+                    if len(pos_list) > 1:
+                        logger.warning(f"Found {len(pos_list)} positions for {ticker}")
+                        
+                        # Sort by creation date to keep the oldest one
+                        sorted_positions = sorted(pos_list, 
+                                               key=lambda x: x.get('creation_date', ''),
+                                               reverse=True)
+                        
+                        # Keep the oldest position, close others
+                        for position in sorted_positions[1:]:
+                            logger.info(f"Closing duplicate position for {ticker}: {position.get('_id')}")
+                            await self._close_position(ticker, {
+                                'status': 'closed',
+                                'exit_reason': 'duplicate_cleanup',
+                                'exit_date': datetime.now().isoformat()
+                            })
+                            
+        except Exception as e:
+            logger.error(f"Error in duplicate position cleanup: {e}")
