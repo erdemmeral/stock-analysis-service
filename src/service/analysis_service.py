@@ -644,28 +644,19 @@ class AnalysisService:
             # Check if position already exists - More robust check
             try:
                 async with aiohttp.ClientSession() as session:
-                    # First check active positions
+                    # Check all positions regardless of status
                     async with session.get(f'{PORTFOLIO_API_URL}/positions') as response:
                         if response.status == 200:
                             positions = await response.json()
-                            # Check for any active position with this ticker
+                            # Check for any position with this ticker
                             for position in positions:
-                                if position.get('ticker') == ticker and position.get('status') == 'active':
-                                    logger.info(f"Active position already exists for {ticker}")
-                                    return {'create': False, 'reasons': ['Position already exists']}
+                                if position.get('ticker') == ticker:
+                                    status = position.get('status', 'unknown')
+                                    logger.info(f"Position exists for {ticker} with status: {status}")
+                                    return {'create': False, 'reasons': [f'Position already exists with status: {status}']}
                         else:
                             logger.error(f"Error checking positions. Status: {response.status}")
                             return {'create': False, 'reasons': ['Error checking existing positions']}
-                    
-                    # Also check pending positions
-                    async with session.get(f'{PORTFOLIO_API_URL}/positions/pending') as response:
-                        if response.status == 200:
-                            pending = await response.json()
-                            # Check for any pending position with this ticker
-                            for position in pending:
-                                if position.get('ticker') == ticker:
-                                    logger.info(f"Pending position already exists for {ticker}")
-                                    return {'create': False, 'reasons': ['Pending position exists']}
             except Exception as e:
                 logger.error(f"Error checking existing positions for {ticker}: {e}")
                 return {'create': False, 'reasons': [f'Error checking positions: {str(e)}']}
