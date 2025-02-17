@@ -1221,20 +1221,55 @@ class AnalysisService:
     async def add_to_watchlist(self, ticker: str, watchlist_data: Dict) -> bool:
         """Add a stock to the watchlist"""
         try:
-            # Ensure required fields are present
-            if 'ticker' not in watchlist_data:
-                watchlist_data['ticker'] = ticker
+            # Ensure required fields are present with proper defaults
+            required_fields = {
+                'ticker': ticker,
+                'last_analysis': datetime.now().isoformat(),
+                'technical_score': 0.0,
+                'technical_scores': {'short': 0.0, 'medium': 0.0, 'long': 0.0},
+                'news_score': 50.0,
+                'news_sentiment': 'neutral',
+                'risk_level': 'medium',
+                'current_price': 0.0,
+                'fundamental_score': None,
+                'status': 'new',
+                'last_updated': datetime.now().isoformat()
+            }
+
+            # Update with provided data
+            watchlist_data = {**required_fields, **watchlist_data}
             
-            if 'fundamental_score' not in watchlist_data:
-                logger.error(f"Missing fundamental_score for {ticker}")
+            # Validate fundamental score
+            if watchlist_data.get('fundamental_score') is None:
+                logger.error(f"Cannot create watchlist item for {ticker}: fundamental_score is required")
                 return False
             
-            # Add additional required fields if missing
-            if 'last_updated' not in watchlist_data:
-                watchlist_data['last_updated'] = datetime.now().isoformat()
-            
-            if 'status' not in watchlist_data:
-                watchlist_data['status'] = 'new'
+            # Ensure numeric fields are float
+            float_fields = ['technical_score', 'news_score', 'current_price', 'fundamental_score']
+            for field in float_fields:
+                if field in watchlist_data and watchlist_data[field] is not None:
+                    try:
+                        watchlist_data[field] = float(watchlist_data[field])
+                    except (ValueError, TypeError):
+                        logger.error(f"Invalid {field} value for {ticker}: {watchlist_data[field]}")
+                        return False
+
+            # Validate technical scores
+            if 'technical_scores' in watchlist_data:
+                try:
+                    for tf, score in watchlist_data['technical_scores'].items():
+                        if score is not None:
+                            watchlist_data['technical_scores'][tf] = float(score)
+                except (ValueError, TypeError):
+                    logger.error(f"Invalid technical score value for {ticker}")
+                    return False
+
+            # Log the data being sent
+            logger.info(f"Watchlist data for {ticker}:")
+            logger.info(f"Fundamental Score: {watchlist_data.get('fundamental_score')}")
+            logger.info(f"Technical Score: {watchlist_data.get('technical_score')}")
+            logger.info(f"News Score: {watchlist_data.get('news_score')}")
+            logger.info(f"Risk Level: {watchlist_data.get('risk_level')}")
 
             async with aiohttp.ClientSession() as session:
                 # Check if already exists
@@ -1247,7 +1282,7 @@ class AnalysisService:
                     async with session.patch(check_url, json=watchlist_data) as update_response:
                         if update_response.status != 200:
                             error_text = await update_response.text()
-                            logger.error(f"Failed to update watchlist entry for {ticker}. Error: {error_text}")
+                            logger.error(f"Failed to update watchlist entry for {ticker}. Status: {update_response.status}, Error: {error_text}")
                             return False
                         logger.info(f"Updated existing watchlist entry for {ticker}")
                 else:
@@ -1256,7 +1291,7 @@ class AnalysisService:
                     async with session.post(create_url, json=watchlist_data) as create_response:
                         if create_response.status not in (200, 201):
                             error_text = await create_response.text()
-                            logger.error(f"Failed to create watchlist entry for {ticker}. Error: {error_text}")
+                            logger.error(f"Failed to create watchlist entry for {ticker}. Status: {create_response.status}, Error: {error_text}")
                             return False
                         logger.info(f"Created new watchlist entry for {ticker}")
                 

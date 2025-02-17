@@ -436,20 +436,26 @@ class FundamentalAnalyzer:
                                 from src.service.analysis_service import AnalysisService
                                 service = AnalysisService()
                                 
+                                # Prepare complete watchlist data
+                                watchlist_data = {
+                                    'ticker': ticker,
+                                    'fundamental_score': float(analysis['score']),
+                                    'last_updated': datetime.now().isoformat(),
+                                    'status': 'new',
+                                    'technical_score': 0.0,
+                                    'technical_scores': {'short': 0.0, 'medium': 0.0, 'long': 0.0},
+                                    'news_score': 50.0,
+                                    'news_sentiment': 'neutral',
+                                    'risk_level': 'medium',
+                                    'current_price': 0.0
+                                }
+                                
                                 # Create task and store it
                                 task = asyncio.create_task(
-                                    service.add_to_watchlist(
-                                        ticker,
-                                        {
-                                            'ticker': ticker,
-                                            'fundamental_score': analysis['score'],
-                                            'last_updated': datetime.now().isoformat(),
-                                            'status': 'new'
-                                        }
-                                    )
+                                    service.add_to_watchlist(ticker, watchlist_data)
                                 )
                                 tasks.append(task)
-                                logger.info(f"Created watchlist task for {ticker}")
+                                logger.info(f"Created watchlist task for {ticker} with fundamental score {analysis['score']}")
                                 
                                 # Create task for immediate analysis
                                 analysis_task = asyncio.create_task(service.analyze_single_stock(ticker))
