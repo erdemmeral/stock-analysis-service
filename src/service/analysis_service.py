@@ -645,17 +645,26 @@ class AnalysisService:
             try:
                 async with aiohttp.ClientSession() as session:
                     # Check all positions regardless of status
-                    async with session.get(f'{PORTFOLIO_API_URL}/positions') as response:
+                    headers = {
+                        'Accept': 'application/json',
+                        'Content-Type': 'application/json'
+                    }
+                    async with session.get(f'{PORTFOLIO_API_URL}/positions', headers=headers) as response:
                         if response.status == 200:
-                            positions = await response.json()
-                            # Check for any position with this ticker
-                            for position in positions:
-                                if position.get('ticker') == ticker:
-                                    status = position.get('status', 'unknown')
-                                    logger.info(f"Position exists for {ticker} with status: {status}")
-                                    return {'create': False, 'reasons': [f'Position already exists with status: {status}']}
+                            try:
+                                positions = await response.json()
+                                # Check for any position with this ticker
+                                for position in positions:
+                                    if position.get('ticker') == ticker:
+                                        status = position.get('status', 'unknown')
+                                        logger.info(f"Position exists for {ticker} with status: {status}")
+                                        return {'create': False, 'reasons': [f'Position already exists with status: {status}']}
+                            except Exception as e:
+                                logger.error(f"Error parsing positions response for {ticker}: {e}")
+                                return {'create': False, 'reasons': [f'Error parsing positions response: {str(e)}']}
                         else:
-                            logger.error(f"Error checking positions. Status: {response.status}")
+                            error_text = await response.text()
+                            logger.error(f"Error checking positions. Status: {response.status}, Response: {error_text}")
                             return {'create': False, 'reasons': ['Error checking existing positions']}
             except Exception as e:
                 logger.error(f"Error checking existing positions for {ticker}: {e}")
