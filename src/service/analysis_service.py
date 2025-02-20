@@ -646,7 +646,10 @@ class AnalysisService:
                 async with aiohttp.ClientSession() as session:
                     headers = self._get_api_headers()
                     # Check all positions regardless of status
-                    async with session.get(f'{PORTFOLIO_API_URL}/positions', headers=headers) as response:
+                    positions_url = self._get_api_url('v1/positions')  # Updated endpoint
+                    logger.info(f"Checking positions at URL: {positions_url}")
+                    
+                    async with session.get(positions_url, headers=headers) as response:
                         if response.status == 200:
                             try:
                                 positions = await response.json()
@@ -658,11 +661,11 @@ class AnalysisService:
                                         return {'create': False, 'reasons': [f'Position already exists with status: {status}']}
                             except Exception as e:
                                 error_text = await response.text()
-                                logger.error(f"Error parsing positions response for {ticker}: {e}, Response: {error_text}")
+                                logger.error(f"Error parsing positions response for {ticker}: {e}, Response: {error_text}, URL: {positions_url}")
                                 return {'create': False, 'reasons': [f'Error checking positions: {str(e)}']}
                         else:
                             error_text = await response.text()
-                            logger.error(f"Error checking positions. Status: {response.status}, Response: {error_text}")
+                            logger.error(f"Error checking positions. Status: {response.status}, Response: {error_text}, URL: {positions_url}")
                             return {'create': False, 'reasons': [f'Error checking positions. Status: {response.status}']}
             except Exception as e:
                 logger.error(f"Error checking existing positions for {ticker}: {e}")
@@ -827,18 +830,20 @@ class AnalysisService:
             logger.error(f"Error in technical analysis run: {e}")
 
     async def _close_position(self, ticker: str, close_data: Dict):
-        """Close a position in the portfolio"""
+        """Close a position"""
         try:
             async with aiohttp.ClientSession() as session:
-                url = f"{PORTFOLIO_API_URL}/positions/{ticker}/close"
-                async with session.patch(url, json=close_data) as response:
-                    if response.status not in (200, 201):
-                        logger.error(f"Error closing position for {ticker}: {response.status}")
+                headers = self._get_api_headers()
+                url = self._get_api_url(f'v1/positions/{ticker}')
+                async with session.patch(url, json=close_data, headers=headers) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        logger.error(f"Failed to close position for {ticker}. Status: {response.status}, Response: {error_text}")
                         return False
-                    logger.info(f"Closed position for {ticker}: {close_data}")
+                    logger.info(f"Closed position for {ticker}")
                     return True
         except Exception as e:
-            logger.error(f"API error closing position for {ticker}: {e}")
+            logger.error(f"Error closing position for {ticker}: {e}")
             return False
 
     async def monitor_news(self):
@@ -988,10 +993,12 @@ class AnalysisService:
         """Update position details in portfolio API"""
         try:
             async with aiohttp.ClientSession() as session:
-                url = f"{PORTFOLIO_API_URL}/positions/{ticker}"
-                async with session.patch(url, json=updates) as response:
+                headers = self._get_api_headers()
+                url = self._get_api_url(f'v1/positions/{ticker}')
+                async with session.patch(url, json=updates, headers=headers) as response:
                     if response.status not in (200, 201):
-                        logger.error(f"Error updating position for {ticker}: {response.status}")
+                        error_text = await response.text()
+                        logger.error(f"Error updating position for {ticker}: Status {response.status}, Response: {error_text}")
                         return False
                     logger.info(f"Updated position for {ticker}: {updates}")
                     return True
@@ -1006,11 +1013,12 @@ class AnalysisService:
                 headers = self._get_api_headers()
                 
                 # First check if item exists
-                async with session.get(f"{PORTFOLIO_API_URL}/watchlist/{ticker}", headers=headers) as response:
+                watchlist_url = self._get_api_url(f'v1/watchlist/{ticker}')  # Updated endpoint
+                async with session.get(watchlist_url, headers=headers) as response:
                     if response.status == 200:
                         # Update existing item
                         async with session.patch(
-                            f"{PORTFOLIO_API_URL}/watchlist/{ticker}",
+                            watchlist_url,
                             json=update_data,
                             headers=headers
                         ) as update_response:
@@ -1022,8 +1030,9 @@ class AnalysisService:
                             return True
                     elif response.status == 404:
                         # Create new item
+                        create_url = self._get_api_url('v1/watchlist')  # Updated endpoint
                         async with session.post(
-                            f"{PORTFOLIO_API_URL}/watchlist",
+                            create_url,
                             json={"ticker": ticker, **update_data},
                             headers=headers
                         ) as create_response:
@@ -1131,15 +1140,25 @@ class AnalysisService:
             'User-Agent': 'StockAnalysisService/1.0'
         }
 
+    def _get_api_url(self, endpoint: str) -> str:
+        """Get full API URL for given endpoint"""
+        # Ensure the base URL doesn't end with a slash
+        base_url = PORTFOLIO_API_URL.rstrip('/')
+        # Ensure the endpoint starts with a slash
+        endpoint = f"/{endpoint.lstrip('/')}"
+        return f"{base_url}{endpoint}"
+
     async def clean_up_positions(self):
         """Clean up positions that are not in watchlist"""
         try:
             # Get all active positions
             async with aiohttp.ClientSession() as session:
                 headers = self._get_api_headers()
-                async with session.get(f"{PORTFOLIO_API_URL}/positions", headers=headers) as response:
+                positions_url = self._get_api_url('v1/positions')
+                async with session.get(positions_url, headers=headers) as response:
                     if response.status != 200:
-                        logger.error("Failed to get positions for cleanup")
+                        error_text = await response.text()
+                        logger.error(f"Failed to get positions for cleanup. Status: {response.status}, Response: {error_text}")
                         return
                     try:
                         positions = await response.json()
@@ -1149,9 +1168,11 @@ class AnalysisService:
                         return
                 
                 # Get watchlist
-                async with session.get(f"{PORTFOLIO_API_URL}/watchlist", headers=headers) as response:
+                watchlist_url = self._get_api_url('v1/watchlist')
+                async with session.get(watchlist_url, headers=headers) as response:
                     if response.status != 200:
-                        logger.error("Failed to get watchlist for cleanup")
+                        error_text = await response.text()
+                        logger.error(f"Failed to get watchlist for cleanup. Status: {response.status}, Response: {error_text}")
                         return
                     try:
                         watchlist = await response.json()
