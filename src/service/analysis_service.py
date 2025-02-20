@@ -644,8 +644,8 @@ class AnalysisService:
             # Check if position already exists - More robust check
             try:
                 async with aiohttp.ClientSession() as session:
-                    # Check all positions regardless of status
                     headers = self._get_api_headers()
+                    # Check all positions regardless of status
                     async with session.get(f'{PORTFOLIO_API_URL}/positions', headers=headers) as response:
                         if response.status == 200:
                             try:
@@ -658,17 +658,15 @@ class AnalysisService:
                                         return {'create': False, 'reasons': [f'Position already exists with status: {status}']}
                             except Exception as e:
                                 error_text = await response.text()
-                                logger.error(f"Error parsing positions response for {ticker}: {response.status}, message='{str(e)}', Response: {error_text}, url='{response.url}'")
-                                return {'create': False, 'reasons': [f'Error checking positions: {response.status}, message={str(e)}, url={response.url}']}
+                                logger.error(f"Error parsing positions response for {ticker}: {e}, Response: {error_text}")
+                                return {'create': False, 'reasons': [f'Error checking positions: {str(e)}']}
                         else:
                             error_text = await response.text()
                             logger.error(f"Error checking positions. Status: {response.status}, Response: {error_text}")
-                            return {'create': False, 'reasons': ['Error checking existing positions']}
+                            return {'create': False, 'reasons': [f'Error checking positions. Status: {response.status}']}
             except Exception as e:
                 logger.error(f"Error checking existing positions for {ticker}: {e}")
                 return {'create': False, 'reasons': [f'Error checking positions: {str(e)}']}
-            
-            reasons = []
             
             # Get technical scores for all timeframes
             technical_scores = tech_analysis.get('technical_score', {}).get('timeframes', {})
@@ -703,57 +701,57 @@ class AnalysisService:
             logger.info(f"Risk level for {ticker}: {risk_level}, Volatility trend: {volatility_trend}")
             
             # Check each criterion and add failure reasons
-            if best_score < 60:
-                reasons.append(f'Technical score too low: {best_score:.1f} < 60')
+            reasons = []
             
-            if news_score < 40:
-                reasons.append(f'News sentiment too negative: {news_score:.1f} < 40')
+            if best_score < 55:  # Lowered from 60
+                reasons.append(f'Technical score too low: {best_score:.1f} < 55')
             
-            if not has_good_volume and best_timeframe not in ['medium', 'long']:
-                reasons.append(f'Insufficient volume ({volume_profile}) for {best_timeframe} timeframe')
+            if news_score < 35:  # Lowered from 40
+                reasons.append(f'News sentiment too negative: {news_score:.1f} < 35')
             
-            # Get fundamental score from watchlist if not in tech_analysis
-            fundamental_score = tech_analysis.get('fundamental_score')
+            if not has_good_volume:
+                reasons.append(f'Insufficient volume ({volume_profile})')
             
-            if fundamental_score is None and ticker:
-                try:
-                    # Fetch from watchlist API
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get(f'{PORTFOLIO_API_URL}/watchlist/{ticker}') as response:
-                            if response.status == 200:
-                                watchlist_data = await response.json()
-                                fundamental_score = float(watchlist_data.get('fundamental_score', 0))
-                                logger.info(f"Retrieved fundamental score from watchlist for {ticker}: {fundamental_score}")
-                except Exception as e:
-                    logger.error(f"Error fetching fundamental score from watchlist for {ticker}: {e}")
-                    fundamental_score = 0
+            # Get fundamental score from watchlist
+            try:
+                async with aiohttp.ClientSession() as session:
+                    headers = self._get_api_headers()
+                    async with session.get(f'{PORTFOLIO_API_URL}/watchlist/{ticker}', headers=headers) as response:
+                        if response.status == 200:
+                            watchlist_data = await response.json()
+                            fundamental_score = float(watchlist_data.get('fundamental_score', 0))
+                            logger.info(f"Retrieved fundamental score from watchlist for {ticker}: {fundamental_score}")
+                        else:
+                            fundamental_score = 0
+                            logger.warning(f"Could not get fundamental score for {ticker}")
+            except Exception as e:
+                logger.error(f"Error fetching fundamental score from watchlist for {ticker}: {e}")
+                fundamental_score = 0
             
-            # Ensure fundamental_score is a float
-            fundamental_score = float(fundamental_score) if fundamental_score is not None else 0
-            
+            # Check fundamental score requirements based on risk level
             if risk_level == 'high':
-                if fundamental_score <= 80:
-                    reasons.append(f'High risk ({risk_level}) with insufficient fundamental score: {fundamental_score:.1f} ≤ 80')
+                if fundamental_score < 70:  # Lowered from 80
+                    reasons.append(f'High risk ({risk_level}) with insufficient fundamental score: {fundamental_score:.1f} < 70')
             elif risk_level == 'extreme':
                 reasons.append(f'Extreme risk level: {risk_level}')
             
             # Additional checks for trend alignment
             trend_direction = tech_analysis.get('signals', {}).get('trend', {}).get('direction', 'neutral')
             logger.info(f"Trend direction for {ticker}: {trend_direction}")
-            if trend_direction in ['strong_bearish', 'bearish']:
-                reasons.append(f'Bearish trend detected: {trend_direction}')
+            if trend_direction == 'strong_bearish':  # Only block strong bearish
+                reasons.append(f'Strong bearish trend detected: {trend_direction}')
             
             # Check momentum
             momentum = tech_analysis.get('signals', {}).get('momentum', {})
             rsi = float(momentum.get('rsi', 50)) if momentum else 50
             logger.info(f"RSI for {ticker}: {rsi}")
-            if rsi > 70:
-                reasons.append(f'RSI overbought: {rsi:.1f} > 70')
-            elif rsi < 30:
-                reasons.append(f'RSI oversold: {rsi:.1f} < 30')
+            if rsi > 75:  # Increased from 70
+                reasons.append(f'RSI overbought: {rsi:.1f} > 75')
+            elif rsi < 25:  # Decreased from 30
+                reasons.append(f'RSI oversold: {rsi:.1f} < 25')
             
             # Check if we have enough timeframe data
-            required_timeframes = ['short', 'medium']
+            required_timeframes = ['short']  # Only require short timeframe
             missing_timeframes = [tf for tf in required_timeframes if tf not in valid_scores]
             if missing_timeframes:
                 reasons.append(f'Missing required timeframe data: {", ".join(missing_timeframes)}')
@@ -1002,228 +1000,86 @@ class AnalysisService:
             return False
 
     async def update_watchlist_item(self, ticker: str, update_data: Dict) -> bool:
-        """Update watchlist item with new analysis"""
+        """Update a watchlist item with new analysis"""
         try:
-            # Get existing watchlist item data
             async with aiohttp.ClientSession() as session:
-                async with session.get(f"{PORTFOLIO_API_URL}/watchlist/{ticker}") as response:
+                headers = self._get_api_headers()
+                
+                # First check if item exists
+                async with session.get(f"{PORTFOLIO_API_URL}/watchlist/{ticker}", headers=headers) as response:
                     if response.status == 200:
-                        existing_data = await response.json()
+                        # Update existing item
+                        async with session.patch(
+                            f"{PORTFOLIO_API_URL}/watchlist/{ticker}",
+                            json=update_data,
+                            headers=headers
+                        ) as update_response:
+                            if update_response.status != 200:
+                                error_text = await update_response.text()
+                                logger.error(f"Failed to update watchlist item for {ticker}. Status: {update_response.status}, Response: {error_text}")
+                                return False
+                            logger.info(f"Updated watchlist item for {ticker}")
+                            return True
+                    elif response.status == 404:
+                        # Create new item
+                        async with session.post(
+                            f"{PORTFOLIO_API_URL}/watchlist",
+                            json={"ticker": ticker, **update_data},
+                            headers=headers
+                        ) as create_response:
+                            if create_response.status not in (200, 201):
+                                error_text = await create_response.text()
+                                logger.error(f"Failed to create watchlist item for {ticker}. Status: {create_response.status}, Response: {error_text}")
+                                return False
+                            logger.info(f"Created new watchlist item for {ticker}")
+                            return True
                     else:
-                        existing_data = {}
-
-            # Preserve fundamental score if it exists and not in update data
-            fundamental_score = update_data.get('fundamental_score')
-            if fundamental_score is None and 'fundamental_score' in existing_data:
-                fundamental_score = existing_data['fundamental_score']
-
-            # Handle technical scores safely
-            technical_scores = update_data.get('technical_scores', existing_data.get('technical_scores', {}))
-            if not technical_scores and 'technical_score' in update_data:
-                logger.info(f"Converting single technical score to timeframe scores for {ticker}")
-                technical_scores = {
-                    'medium': update_data['technical_score']
-                }
-            elif not technical_scores and 'technical_scores' in existing_data:
-                technical_scores = existing_data['technical_scores']
-                logger.info(f"Preserving existing technical scores for {ticker}")
-
-            # Convert technical scores to float safely
-            safe_technical_scores = {}
-            for tf, score in technical_scores.items():
-                try:
-                    if score is not None:
-                        safe_technical_scores[tf] = float(score)
-                    else:
-                        safe_technical_scores[tf] = None
-                except (ValueError, TypeError):
-                    logger.warning(f"Invalid technical score for {ticker} {tf}: {score}")
-                    safe_technical_scores[tf] = None
-
-            # Get best timeframe based on highest score, excluding None values
-            valid_scores = {k: v for k, v in safe_technical_scores.items() if v is not None}
-            if valid_scores:
-                best_timeframe, best_score = max(valid_scores.items(), key=lambda x: x[1])
-                logger.info(f"Best timeframe for {ticker}: {best_timeframe} with score {best_score}")
-            else:
-                best_timeframe = existing_data.get('best_timeframe', 'medium')
-                best_score = None
-                logger.warning(f"No valid technical scores for {ticker}, using existing timeframe: {best_timeframe}")
-
-            # Handle current price safely
-            current_price = update_data.get('current_price')
-            if current_price is None or current_price == 0:
-                try:
-                    stock = yf.Ticker(ticker)
-                    current_price = stock.info.get('regularMarketPrice')
-                    if not current_price:
-                        hist = stock.history(period='1d')
-                        if not hist.empty:
-                            current_price = float(hist['Close'].iloc[-1])
-                except Exception as e:
-                    logger.error(f"Error fetching current price for {ticker}: {e}")
-                    current_price = None
-
-            # Prepare watchlist data with safe conversions
-            watchlist_data = {
-                'ticker': ticker,
-                'last_analysis': datetime.now().isoformat(),
-                'technical_scores': safe_technical_scores,
-                'best_timeframe': best_timeframe
-            }
-
-            # Add optional fields only if they have valid values
-            if best_score is not None:
-                watchlist_data['technical_score'] = best_score
-
-            if current_price is not None:
-                watchlist_data['current_price'] = current_price
-
-            # Handle news score safely
-            try:
-                news_score = update_data.get('news_score', existing_data.get('news_score'))
-                if news_score is not None:
-                    watchlist_data['news_score'] = float(news_score)
-            except (ValueError, TypeError):
-                logger.warning(f"Invalid news score for {ticker}: {news_score}")
-
-            # Add other fields with safe defaults
-            watchlist_data.update({
-                'news_sentiment': update_data.get('news_sentiment', existing_data.get('news_sentiment', 'neutral')),
-                'risk_level': update_data.get('risk_level', existing_data.get('risk_level', 'medium'))
-            })
-
-            # Add fundamental score if available
-            if fundamental_score is not None:
-                try:
-                    watchlist_data['fundamental_score'] = float(fundamental_score)
-                except (ValueError, TypeError):
-                    logger.warning(f"Invalid fundamental score for {ticker}: {fundamental_score}")
-            elif not existing_data:  # If this is a new item and no fundamental score
-                logger.error(f"Cannot create watchlist item for {ticker}: fundamental_score is required")
-                return False
-
-            # Log the update for debugging
-            logger.info(f"Updating watchlist for {ticker}:")
-            logger.info(f"Technical Scores: {safe_technical_scores}")
-            logger.info(f"Best Timeframe: {best_timeframe}")
-            logger.info(f"Current Price: {current_price}")
-
-            # Update or create watchlist item
-            async with aiohttp.ClientSession() as session:
-                if existing_data:
-                    async with session.patch(
-                        f"{PORTFOLIO_API_URL}/watchlist/{ticker}",
-                        json=watchlist_data
-                    ) as response:
-                        if response.status != 200:
-                            error_text = await response.text()
-                            logger.error(f"Failed to update watchlist item for {ticker}. Status: {response.status}, Error: {error_text}")
-                            return False
-                        logger.info(f"Successfully updated watchlist item for {ticker}")
-                else:
-                    async with session.post(
-                        f"{PORTFOLIO_API_URL}/watchlist",
-                        json=watchlist_data
-                    ) as response:
-                        if response.status not in (200, 201):
-                            error_text = await response.text()
-                            logger.error(f"Failed to create watchlist item for {ticker}. Status: {response.status}, Error: {error_text}")
-                            return False
-                        logger.info(f"Created new watchlist entry for {ticker}")
-
-            return True
-
+                        error_text = await response.text()
+                        logger.error(f"Error checking watchlist for {ticker}. Status: {response.status}, Response: {error_text}")
+                        return False
+                        
         except Exception as e:
             logger.error(f"Error updating watchlist item for {ticker}: {e}")
             return False
 
     async def analyze_single_stock(self, ticker: str):
-        """Analyze a single stock immediately after passing fundamental criteria"""
+        """Analyze a single stock and update watchlist"""
         try:
-            logger.info(f"Running immediate analysis for {ticker}")
+            # Get technical analysis
+            tech_analysis = self.tech_analyzer.analyze_stock(ticker)
             
-            # Run technical analysis with retries
-            retry_count = 0
-            max_retries = 3
-            tech_analysis = None
+            # Get news analysis
+            news_analysis = self.news_analyzer.analyze_stock_news(ticker)
             
-            while retry_count < max_retries:
-                try:
-                    tech_analysis = self.tech_analyzer.analyze_stock(ticker)
-                    if tech_analysis and 'technical_score' in tech_analysis:
-                        # Add ticker to tech_analysis
-                        tech_analysis['ticker'] = ticker
-                        break
-                except Exception as e:
-                    retry_count += 1
-                    if retry_count < max_retries:
-                        logger.warning(f"Retry {retry_count} technical analysis for {ticker}: {e}")
-                        await asyncio.sleep(5)
-                    else:
-                        logger.error(f"Failed technical analysis for {ticker} after {max_retries} attempts: {e}")
-                        return
+            # Get current price from technical analysis
+            current_price = tech_analysis.get('signals', {}).get('current_price', 0.0)
             
-            # Run news analysis with retries
-            retry_count = 0
-            news_analysis = None
+            # Prepare watchlist update data
+            update_data = {
+                'ticker': ticker,
+                'last_updated': datetime.now().isoformat(),
+                'technical_score': float(tech_analysis['technical_score']['total']),
+                'technical_scores': tech_analysis['technical_score']['timeframes'],
+                'news_score': float(news_analysis['news_score']),
+                'news_sentiment': news_analysis['sentiment'],
+                'risk_level': tech_analysis.get('signals', {}).get('volatility', {}).get('risk_level', 'medium'),
+                'current_price': float(current_price)
+            }
             
-            while retry_count < max_retries:
-                try:
-                    news_analysis = self.news_analyzer.analyze_stock_news(ticker)
-                    if news_analysis and 'news_score' in news_analysis:
-                        break
-                except Exception as e:
-                    retry_count += 1
-                    if retry_count < max_retries:
-                        logger.warning(f"Retry {retry_count} news analysis for {ticker}: {e}")
-                        await asyncio.sleep(5)
-                    else:
-                        logger.error(f"Failed news analysis for {ticker} after {max_retries} attempts: {e}")
-                        return
+            # Log the data being sent
+            logger.info(f"Updating watchlist for {ticker} with data: {update_data}")
             
-            if tech_analysis and news_analysis:
-                # Get current price
-                current_price = tech_analysis.get('signals', {}).get('current_price')
-                if current_price is None:
-                    try:
-                        stock_info = yf.Ticker(ticker).info
-                        current_price = stock_info.get('regularMarketPrice', 0.0)
-                    except Exception as e:
-                        logger.error(f"Error getting current price for {ticker}: {e}")
-                        current_price = 0.0
-                
-                # Prepare update data
-                update_data = {
-                    'last_analysis': datetime.now().isoformat(),
-                    'technical_score': float(tech_analysis['technical_score']['total']),
-                    'technical_scores': {
-                        tf: float(score) 
-                        for tf, score in tech_analysis['technical_score']['timeframes'].items()
-                    },
-                    'news_score': float(news_analysis['news_score']),
-                    'news_sentiment': news_analysis['sentiment'],
-                    'risk_level': tech_analysis['signals']['volatility']['risk_level'],
-                    'current_price': float(current_price) if current_price else 0.0
-                }
-                
-                # Update watchlist item
-                await self.update_watchlist_item(ticker, update_data)
-                
-                # Check if we should create a position
-                position_decision = await self.should_create_position(tech_analysis, news_analysis)
-                if position_decision['create']:
-                    await self.handle_portfolio_addition(
-                        ticker,
-                        tech_analysis['technical_score']['total'],
-                        tech_analysis,
-                        news_analysis
-                    )
-                
-                logger.info(f"Completed immediate analysis for {ticker}")
+            # Update watchlist
+            await self.update_watchlist_item(ticker, update_data)
+            
+            return {
+                'technical_analysis': tech_analysis,
+                'news_analysis': news_analysis
+            }
             
         except Exception as e:
-            logger.error(f"Error in immediate analysis for {ticker}: {e}")
+            logger.error(f"Error analyzing {ticker}: {e}")
+            return None
 
     async def add_to_watchlist(self, ticker: str, watchlist_data: Dict) -> bool:
         """Add or update a stock in the watchlist"""
@@ -1271,7 +1127,8 @@ class AnalysisService:
         """Get standard headers for API calls"""
         return {
             'Accept': 'application/json',
-            'Content-Type': 'application/json'
+            'Content-Type': 'application/json',
+            'User-Agent': 'StockAnalysisService/1.0'
         }
 
     async def clean_up_positions(self):
