@@ -646,7 +646,7 @@ class AnalysisService:
                 async with aiohttp.ClientSession() as session:
                     headers = self._get_api_headers()
                     # Check all positions regardless of status
-                    positions_url = self._get_api_url('v1/positions')  # Updated endpoint
+                    positions_url = self._get_api_url('positions')  # Updated endpoint
                     logger.info(f"Checking positions at URL: {positions_url}")
                     
                     async with session.get(positions_url, headers=headers) as response:
@@ -661,11 +661,11 @@ class AnalysisService:
                                         return {'create': False, 'reasons': [f'Position already exists with status: {status}']}
                             except Exception as e:
                                 error_text = await response.text()
-                                logger.error(f"Error parsing positions response for {ticker}: {e}, Response: {error_text}, URL: {positions_url}")
+                                logger.error(f"Error parsing positions response: {e}, Response: {error_text}")
                                 return {'create': False, 'reasons': [f'Error checking positions: {str(e)}']}
                         else:
                             error_text = await response.text()
-                            logger.error(f"Error checking positions. Status: {response.status}, Response: {error_text}, URL: {positions_url}")
+                            logger.error(f"Error checking positions. Status: {response.status}, Response: {error_text}")
                             return {'create': False, 'reasons': [f'Error checking positions. Status: {response.status}']}
             except Exception as e:
                 logger.error(f"Error checking existing positions for {ticker}: {e}")
@@ -834,7 +834,7 @@ class AnalysisService:
         try:
             async with aiohttp.ClientSession() as session:
                 headers = self._get_api_headers()
-                url = self._get_api_url(f'v1/positions/{ticker}')
+                url = self._get_api_url(f'positions/{ticker}')
                 async with session.patch(url, json=close_data, headers=headers) as response:
                     if response.status != 200:
                         error_text = await response.text()
@@ -994,7 +994,7 @@ class AnalysisService:
         try:
             async with aiohttp.ClientSession() as session:
                 headers = self._get_api_headers()
-                url = self._get_api_url(f'v1/positions/{ticker}')
+                url = self._get_api_url(f'positions/{ticker}')
                 async with session.patch(url, json=updates, headers=headers) as response:
                     if response.status not in (200, 201):
                         error_text = await response.text()
@@ -1013,7 +1013,7 @@ class AnalysisService:
                 headers = self._get_api_headers()
                 
                 # First check if item exists
-                watchlist_url = self._get_api_url(f'v1/watchlist/{ticker}')  # Updated endpoint
+                watchlist_url = self._get_api_url(f'watchlist/{ticker}')
                 async with session.get(watchlist_url, headers=headers) as response:
                     if response.status == 200:
                         # Update existing item
@@ -1030,7 +1030,7 @@ class AnalysisService:
                             return True
                     elif response.status == 404:
                         # Create new item
-                        create_url = self._get_api_url('v1/watchlist')  # Updated endpoint
+                        create_url = self._get_api_url('watchlist')
                         async with session.post(
                             create_url,
                             json={"ticker": ticker, **update_data},
@@ -1144,8 +1144,9 @@ class AnalysisService:
         """Get full API URL for given endpoint"""
         # Ensure the base URL doesn't end with a slash
         base_url = PORTFOLIO_API_URL.rstrip('/')
-        # Ensure the endpoint starts with a slash
-        endpoint = f"/{endpoint.lstrip('/')}"
+        # Ensure the endpoint starts with a slash and doesn't include api/v1
+        endpoint = endpoint.replace('v1/', '')  # Remove v1/ if present
+        endpoint = f"/{endpoint.lstrip('/')}"  # Ensure starts with slash
         return f"{base_url}{endpoint}"
 
     async def clean_up_positions(self):
@@ -1154,7 +1155,7 @@ class AnalysisService:
             # Get all active positions
             async with aiohttp.ClientSession() as session:
                 headers = self._get_api_headers()
-                positions_url = self._get_api_url('v1/positions')
+                positions_url = self._get_api_url('positions')
                 async with session.get(positions_url, headers=headers) as response:
                     if response.status != 200:
                         error_text = await response.text()
@@ -1168,7 +1169,7 @@ class AnalysisService:
                         return
                 
                 # Get watchlist
-                watchlist_url = self._get_api_url('v1/watchlist')
+                watchlist_url = self._get_api_url('watchlist')
                 async with session.get(watchlist_url, headers=headers) as response:
                     if response.status != 200:
                         error_text = await response.text()

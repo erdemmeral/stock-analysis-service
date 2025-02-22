@@ -19,7 +19,7 @@ TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
 TELEGRAM_CHANNEL_ID = os.getenv('TELEGRAM_CHANNEL_ID')
 
 # Portfolio API URL
-PORTFOLIO_API_URL = os.getenv('PORTFOLIO_API_URL', 'https://portfolio-tracker-rough-dawn-5271.fly.dev/api')
+PORTFOLIO_API_URL = os.getenv('PORTFOLIO_API_URL', 'https://stock-analysis-service.fly.dev/api')
 
 # Analysis timeframes
 TIMEFRAME_CONFIGS = {
