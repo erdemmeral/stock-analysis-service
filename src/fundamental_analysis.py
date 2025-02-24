@@ -411,7 +411,7 @@ class FundamentalAnalyzer:
             tasks = []  # List to store async tasks
             
             # Process in batches
-            batch_size = 30
+            batch_size = 20
             for i in range(0, len(tickers), batch_size):
                 batch = tickers[i:i + batch_size]
                 logger.info(f"Processing batch {(i//batch_size)+1} of {(len(tickers)+batch_size-1)//batch_size}")
@@ -474,7 +474,7 @@ class FundamentalAnalyzer:
                 # Sleep between batches (except after the last batch)
                 if i + batch_size < len(tickers):
                     logger.info("Sleeping 120 seconds between batches...")
-                    time.sleep(120)  # Increased from 45 to 120 seconds
+                    await asyncio.sleep(120)  # Use asyncio.sleep instead of time.sleep
             
             # Wait for all tasks to complete with proper error handling
             if tasks:

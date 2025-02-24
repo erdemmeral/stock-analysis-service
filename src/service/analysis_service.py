@@ -82,7 +82,7 @@ class AnalysisService:
         """Run fundamental analysis to update watchlist"""
         try:
             logger.info("Running fundamental analysis...")
-            fund_results, raw_data = self.fund_analyzer.analyze_stocks()
+            fund_results, raw_data = await self.fund_analyzer.analyze_stocks()
             
             # Add or update stocks in watchlist with fundamental scores
             async with aiohttp.ClientSession() as session:
@@ -1014,7 +1014,16 @@ class AnalysisService:
                 
                 # First check if item exists
                 watchlist_url = self._get_api_url(f'watchlist/{ticker}')
+                logger.info(f"Checking watchlist item at: {watchlist_url}")
+                
                 async with session.get(watchlist_url, headers=headers) as response:
+                    # Check content type to ensure we're getting JSON
+                    content_type = response.headers.get('Content-Type', '')
+                    if response.status != 200 and response.status != 404:
+                        error_text = await response.text()
+                        logger.error(f"Error checking watchlist for {ticker}. Status: {response.status}, Content-Type: {content_type}, Response: {error_text[:200]}...")
+                        return False
+                        
                     if response.status == 200:
                         # Update existing item
                         async with session.patch(
@@ -1024,7 +1033,7 @@ class AnalysisService:
                         ) as update_response:
                             if update_response.status != 200:
                                 error_text = await update_response.text()
-                                logger.error(f"Failed to update watchlist item for {ticker}. Status: {update_response.status}, Response: {error_text}")
+                                logger.error(f"Failed to update watchlist item for {ticker}. Status: {update_response.status}, Response: {error_text[:200]}...")
                                 return False
                             logger.info(f"Updated watchlist item for {ticker}")
                             return True
@@ -1038,14 +1047,10 @@ class AnalysisService:
                         ) as create_response:
                             if create_response.status not in (200, 201):
                                 error_text = await create_response.text()
-                                logger.error(f"Failed to create watchlist item for {ticker}. Status: {create_response.status}, Response: {error_text}")
+                                logger.error(f"Failed to create watchlist item for {ticker}. Status: {create_response.status}, Response: {error_text[:200]}...")
                                 return False
                             logger.info(f"Created new watchlist item for {ticker}")
                             return True
-                    else:
-                        error_text = await response.text()
-                        logger.error(f"Error checking watchlist for {ticker}. Status: {response.status}, Response: {error_text}")
-                        return False
                         
         except Exception as e:
             logger.error(f"Error updating watchlist item for {ticker}: {e}")
@@ -1054,11 +1059,15 @@ class AnalysisService:
     async def analyze_single_stock(self, ticker: str):
         """Analyze a single stock and update watchlist"""
         try:
+            logger.info(f"Starting analysis for {ticker}")
+            
             # Get technical analysis
             tech_analysis = self.tech_analyzer.analyze_stock(ticker)
+            logger.info(f"Completed technical analysis for {ticker}")
             
             # Get news analysis
             news_analysis = self.news_analyzer.analyze_stock_news(ticker)
+            logger.info(f"Completed news analysis for {ticker}")
             
             # Get current price from technical analysis
             current_price = tech_analysis.get('signals', {}).get('current_price', 0.0)
@@ -1079,7 +1088,9 @@ class AnalysisService:
             logger.info(f"Updating watchlist for {ticker} with data: {update_data}")
             
             # Update watchlist
-            await self.update_watchlist_item(ticker, update_data)
+            result = await self.update_watchlist_item(ticker, update_data)
+            if not result:
+                logger.error(f"Failed to update watchlist for {ticker}")
             
             return {
                 'technical_analysis': tech_analysis,
@@ -1087,60 +1098,74 @@ class AnalysisService:
             }
             
         except Exception as e:
-            logger.error(f"Error analyzing {ticker}: {e}")
+            logger.error(f"Error analyzing {ticker}: {str(e)}", exc_info=True)
             return None
 
     async def add_to_watchlist(self, ticker: str, watchlist_data: Dict) -> bool:
         """Add or update a stock in the watchlist"""
         try:
+            logger.info(f"Adding/updating {ticker} to watchlist with data: {watchlist_data}")
+            
             # Check if ticker exists in watchlist
             async with aiohttp.ClientSession() as session:
                 headers = self._get_api_headers()
-                async with session.get(f"{PORTFOLIO_API_URL}/watchlist/{ticker}", headers=headers) as response:
+                watchlist_url = self._get_api_url(f'watchlist/{ticker}')
+                
+                logger.info(f"Checking if {ticker} exists in watchlist at: {watchlist_url}")
+                async with session.get(watchlist_url, headers=headers) as response:
+                    # Check content type to ensure we're getting JSON or handling 404 correctly
+                    content_type = response.headers.get('Content-Type', '')
+                    
+                    if response.status != 200 and response.status != 404:
+                        error_text = await response.text()
+                        logger.error(f"Error checking watchlist for {ticker}. Status: {response.status}, Content-Type: {content_type}, Response: {error_text[:200]}...")
+                        return False
+                    
                     if response.status == 200:
                         # Update existing watchlist item
+                        logger.info(f"Updating existing watchlist item for {ticker}")
                         async with session.patch(
-                            f"{PORTFOLIO_API_URL}/watchlist/{ticker}",
+                            watchlist_url,
                             json=watchlist_data,
                             headers=headers
                         ) as update_response:
                             if update_response.status != 200:
                                 error_text = await update_response.text()
-                                logger.error(f"Failed to update watchlist item for {ticker}. Status: {update_response.status}, Response: {error_text}")
+                                logger.error(f"Failed to update watchlist item for {ticker}. Status: {update_response.status}, Response: {error_text[:200]}...")
                                 return False
-                            logger.info(f"Updated watchlist item for {ticker}")
+                            logger.info(f"Successfully updated watchlist item for {ticker}")
                             return True
-                    elif response.status == 404:
+                    else:
                         # Create new watchlist item
+                        create_url = self._get_api_url('watchlist')
+                        logger.info(f"Creating new watchlist item for {ticker} at: {create_url}")
                         async with session.post(
-                            f"{PORTFOLIO_API_URL}/watchlist",
+                            create_url,
                             json={"ticker": ticker, **watchlist_data},
                             headers=headers
                         ) as create_response:
                             if create_response.status not in (200, 201):
                                 error_text = await create_response.text()
-                                logger.error(f"Failed to create watchlist item for {ticker}. Status: {create_response.status}, Response: {error_text}")
+                                logger.error(f"Failed to create watchlist item for {ticker}. Status: {create_response.status}, Response: {error_text[:200]}...")
                                 return False
-                            logger.info(f"Created new watchlist item for {ticker}")
+                            logger.info(f"Successfully created new watchlist item for {ticker}")
                             return True
-                    else:
-                        error_text = await response.text()
-                        logger.error(f"Error checking watchlist for {ticker}. Status: {response.status}, Response: {error_text}")
-                        return False
-                        
+                
         except Exception as e:
-            logger.error(f"Error adding {ticker} to watchlist: {e}")
+            logger.error(f"Error adding {ticker} to watchlist: {str(e)}", exc_info=True)
             return False
 
     def _get_api_url(self, endpoint: str) -> str:
         """Construct API URL properly"""
         base_url = PORTFOLIO_API_URL.rstrip('/')  # Remove trailing slash if present
         
-        # Remove leading slash and 'api' from endpoint if present
+        # Remove leading slash from endpoint if present
         endpoint = endpoint.lstrip('/')
+        
+        # Remove 'api/' prefix from endpoint if it exists
         if endpoint.startswith('api/'):
             endpoint = endpoint[4:]
-        
+            
         # Construct final URL with single 'api' path
         return f"{base_url}/api/{endpoint}"
 
@@ -1158,17 +1183,26 @@ class AnalysisService:
             logger.info(f"Fetching positions from: {url}")
             
             async with aiohttp.ClientSession() as session:
-                async with session.get(url, headers=self._get_api_headers()) as response:
+                headers = self._get_api_headers()
+                async with session.get(url, headers=headers) as response:
                     if response.status != 200:
-                        logger.error(f"Failed to get positions: {response.status}")
+                        error_text = await response.text()
+                        logger.error(f"Failed to get positions. Status: {response.status}, Response: {error_text}")
                         return
                     
                     try:
+                        # Check content type to ensure we're getting JSON
+                        content_type = response.headers.get('Content-Type', '')
+                        if 'application/json' not in content_type:
+                            error_text = await response.text()
+                            logger.error(f"Unexpected content type: {content_type}. Response: {error_text[:200]}...")
+                            return
+                            
                         positions = await response.json()
                         logger.info(f"Found {len(positions)} positions to check")
                     except Exception as e:
                         error_text = await response.text()
-                        logger.error(f"Error parsing positions response: {e}, Response: {error_text}")
+                        logger.error(f"Error parsing positions response: {e}, Response: {error_text[:200]}...")
                         return
                 
                 # Get watchlist
