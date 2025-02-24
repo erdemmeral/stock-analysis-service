@@ -473,8 +473,8 @@ class FundamentalAnalyzer:
                 
                 # Sleep between batches (except after the last batch)
                 if i + batch_size < len(tickers):
-                    logger.info("Sleeping 45 seconds between batches...")
-                    time.sleep(45)
+                    logger.info("Sleeping 120 seconds between batches...")
+                    time.sleep(120)  # Increased from 45 to 120 seconds
             
             # Wait for all tasks to complete with proper error handling
             if tasks:

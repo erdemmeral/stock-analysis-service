@@ -1144,9 +1144,8 @@ class AnalysisService:
         """Get full API URL for given endpoint"""
         # Ensure the base URL doesn't end with a slash
         base_url = PORTFOLIO_API_URL.rstrip('/')
-        # Ensure the endpoint starts with a slash and doesn't include api/v1
-        endpoint = endpoint.replace('v1/', '')  # Remove v1/ if present
-        endpoint = f"/{endpoint.lstrip('/')}"  # Ensure starts with slash
+        # Add /api prefix and ensure endpoint starts with a slash
+        endpoint = f"/api/{endpoint.lstrip('/')}"
         return f"{base_url}{endpoint}"
 
     async def clean_up_positions(self):
@@ -1156,6 +1155,8 @@ class AnalysisService:
             async with aiohttp.ClientSession() as session:
                 headers = self._get_api_headers()
                 positions_url = self._get_api_url('positions')
+                logger.info(f"Fetching positions from: {positions_url}")
+                
                 async with session.get(positions_url, headers=headers) as response:
                     if response.status != 200:
                         error_text = await response.text()
@@ -1163,6 +1164,7 @@ class AnalysisService:
                         return
                     try:
                         positions = await response.json()
+                        logger.info(f"Successfully fetched {len(positions)} positions")
                     except Exception as e:
                         error_text = await response.text()
                         logger.error(f"Error parsing positions response: {e}, Response: {error_text}")
@@ -1170,6 +1172,8 @@ class AnalysisService:
                 
                 # Get watchlist
                 watchlist_url = self._get_api_url('watchlist')
+                logger.info(f"Fetching watchlist from: {watchlist_url}")
+                
                 async with session.get(watchlist_url, headers=headers) as response:
                     if response.status != 200:
                         error_text = await response.text()
@@ -1177,6 +1181,7 @@ class AnalysisService:
                         return
                     try:
                         watchlist = await response.json()
+                        logger.info(f"Successfully fetched {len(watchlist)} watchlist items")
                     except Exception as e:
                         error_text = await response.text()
                         logger.error(f"Error parsing watchlist response: {e}, Response: {error_text}")

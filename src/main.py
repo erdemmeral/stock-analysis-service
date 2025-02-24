@@ -26,13 +26,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-def analyze_stocks() -> Dict:
+async def analyze_stocks() -> Dict:
     """Run fundamental, technical, and news analysis"""
     try:
         # Run fundamental analysis first
         logger.info("Starting Fundamental Analysis...")
         fund_analyzer = FundamentalAnalyzer()
-        fund_results, raw_data = fund_analyzer.analyze_stocks()
+        fund_results, raw_data = await fund_analyzer.analyze_stocks()
         
         logger.info(f"Found {len(fund_results)} stocks passing fundamental criteria")
         
