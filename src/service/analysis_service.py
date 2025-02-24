@@ -1132,39 +1132,40 @@ class AnalysisService:
             logger.error(f"Error adding {ticker} to watchlist: {e}")
             return False
 
+    def _get_api_url(self, endpoint: str) -> str:
+        """Construct API URL properly"""
+        base_url = PORTFOLIO_API_URL.rstrip('/')  # Remove trailing slash if present
+        
+        # Remove leading slash and 'api' from endpoint if present
+        endpoint = endpoint.lstrip('/')
+        if endpoint.startswith('api/'):
+            endpoint = endpoint[4:]
+        
+        # Construct final URL with single 'api' path
+        return f"{base_url}/api/{endpoint}"
+
     def _get_api_headers(self):
-        """Get standard headers for API calls"""
+        """Get headers for API requests"""
         return {
-            'Accept': 'application/json',
             'Content-Type': 'application/json',
-            'User-Agent': 'StockAnalysisService/1.0'
+            'Accept': 'application/json'
         }
 
-    def _get_api_url(self, endpoint: str) -> str:
-        """Get full API URL for given endpoint"""
-        # Ensure the base URL doesn't end with a slash
-        base_url = PORTFOLIO_API_URL.rstrip('/')
-        # Add /api prefix and ensure endpoint starts with a slash
-        endpoint = f"/api/{endpoint.lstrip('/')}"
-        return f"{base_url}{endpoint}"
-
     async def clean_up_positions(self):
-        """Clean up positions that are not in watchlist"""
+        """Clean up positions that should be closed"""
         try:
-            # Get all active positions
+            url = self._get_api_url('positions')
+            logger.info(f"Fetching positions from: {url}")
+            
             async with aiohttp.ClientSession() as session:
-                headers = self._get_api_headers()
-                positions_url = self._get_api_url('positions')
-                logger.info(f"Fetching positions from: {positions_url}")
-                
-                async with session.get(positions_url, headers=headers) as response:
+                async with session.get(url, headers=self._get_api_headers()) as response:
                     if response.status != 200:
-                        error_text = await response.text()
-                        logger.error(f"Failed to get positions for cleanup. Status: {response.status}, Response: {error_text}")
+                        logger.error(f"Failed to get positions: {response.status}")
                         return
+                    
                     try:
                         positions = await response.json()
-                        logger.info(f"Successfully fetched {len(positions)} positions")
+                        logger.info(f"Found {len(positions)} positions to check")
                     except Exception as e:
                         error_text = await response.text()
                         logger.error(f"Error parsing positions response: {e}, Response: {error_text}")
@@ -1174,7 +1175,7 @@ class AnalysisService:
                 watchlist_url = self._get_api_url('watchlist')
                 logger.info(f"Fetching watchlist from: {watchlist_url}")
                 
-                async with session.get(watchlist_url, headers=headers) as response:
+                async with session.get(watchlist_url, headers=self._get_api_headers()) as response:
                     if response.status != 200:
                         error_text = await response.text()
                         logger.error(f"Failed to get watchlist for cleanup. Status: {response.status}, Response: {error_text}")
